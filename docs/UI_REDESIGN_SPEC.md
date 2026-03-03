@@ -6,6 +6,9 @@ Goal: sharper, denser, lower-noise interface with direct DAG manipulation.
 
 Current shipped refinements on top of this spec:
 
+- The app now defaults to a transcript-first `Focus` mode and keeps DAG editing in a separate `Map` mode.
+- Structural actions are explicit in the main shell: `Continue`, `Branch`, `Merge Into...`, and `Compare`.
+- The selected turn now exposes a `Current Context` stack so inherited and imported context can be inspected directly.
 - Branches are labeled `Main`, `Branch 1`, `Branch 2`, and so on.
 - Branch transcripts include inherited parent-lineage rows.
 - Branch lanes can be manually reordered in the DAG and that order persists locally.

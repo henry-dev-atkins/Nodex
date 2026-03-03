@@ -24,11 +24,12 @@ The README describes the current shipped behavior. The spec and implementation p
 ## Current UI
 
 - Left sidebar: compact conversation rows with branch/turn counts and status dots
-- Header: one-line conversation title plus current `Main / Branch n` label, turn, and connection-status dot
-- Graph: zoomable and pannable vertical DAG with prompt-summary boxes, draggable branch lanes, solid lineage edges, dashed imported-context edges, and drag handles for child-turn creation or merge-back into another branch head
+- Header: one-line conversation title plus current `Main / Branch n` label, turn, mode toggle, and connection-status dot
+- Focus mode: explicit `Continue`, `Branch`, `Merge Into...`, and `Compare` actions above a `Current Context` panel plus the active branch transcript
+- Map mode: zoomable and pannable vertical DAG with prompt-summary boxes, draggable branch lanes, solid lineage edges, dashed imported-context edges, and drag handles for child-turn creation or merge-back into another branch head
 - Transcript: compact `Tn` rows with summarized prompt previews, response previews, inherited parent-context rows, and scrollable expanded responses
+- Compare panel: side-by-side prompt and response summaries for two selected turns
 - Approvals: inline inside the transcript, never modal auto-approval
-- Child-turn creation: drag from one turn node onto another, inspect the generated transfer blob, then create the linked child turn
 
 Context imports are copied into the created child turn as prompt text, but the new turn is also linked back to its source turn(s) so the DAG can show provenance.
 
@@ -78,7 +79,9 @@ The tests use a fake Codex harness and do not require network access or a live C
 
 - Create a conversation
 - Start or continue a turn on the selected branch
-- Branch from an earlier turn by focusing that node and replying
-- Create a linked child turn by dragging one DAG node onto another
-- Merge a side branch back into another branch head by dragging across branches
+- Branch from any selected turn with the explicit `Branch` action
+- Inspect active lineage and imported context from the `Current Context` stack
+- Compare two turns side by side from the explicit `Compare` action
+- Create a linked child turn by dragging one DAG node onto another in Map mode
+- Merge a side branch back into another branch head by arming `Merge Into...` and selecting a target turn in Map mode
 - Approve or deny Codex file-change / command requests

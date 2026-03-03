@@ -1,3 +1,5 @@
+import { buildBlocks, summarizeText, summarizeTurn } from "./rendering.js";
+
 export function sortThreads(threads) {
   return [...threads].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
@@ -160,6 +162,112 @@ export function getSelectedNode(state) {
     isHead: !turn || headTurn?.turnId === turn.turnId,
     headTurn,
     conversationId: getConversationRootId(state, thread.threadId),
+  };
+}
+
+export function getNodeSnapshot(state, threadId, turnId = null) {
+  const thread = getThread(state, threadId);
+  if (!thread) {
+    return null;
+  }
+  const turn = turnId ? getTurn(state, threadId, turnId) : null;
+  const approvals = turn ? getApprovalsForTurn(state, threadId, turn.turnId) : [];
+  const events = turn ? state.eventsByTurn[`${threadId}:${turn.turnId}`] || [] : [];
+  const blocks = turn ? buildBlocks(turn, events, approvals) : [];
+  const summary = turn ? summarizeTurn(turn, blocks, approvals) : null;
+  const contextLinks = Array.isArray(turn?.metadata?.contextLinks)
+    ? turn.metadata.contextLinks.filter((link) => link?.sourceThreadId && link?.sourceTurnId)
+    : [];
+  return {
+    nodeId: getNodeId(threadId, turn?.turnId || null),
+    thread,
+    turn,
+    approvals,
+    events,
+    blocks,
+    summary,
+    contextLinks,
+    branchLabel: getBranchLabel(state, threadId),
+    promptSummary: turn ? summarizeText(turn.userText || "No prompt", 72) : "Start",
+  };
+}
+
+function buildLineageEntries(state, threadId, cutoffTurnId = null, into = []) {
+  const thread = getThread(state, threadId);
+  if (!thread) {
+    return into;
+  }
+  if (thread.parentThreadId) {
+    buildLineageEntries(state, thread.parentThreadId, thread.forkedFromTurnId, into);
+  }
+  const turns = getTurns(state, threadId);
+  const cutoffIdx = cutoffTurnId ? getTurn(state, threadId, cutoffTurnId)?.idx ?? turns.length : turns[turns.length - 1]?.idx ?? 0;
+  for (const turn of turns) {
+    if (turn.idx > cutoffIdx) {
+      continue;
+    }
+    into.push({
+      kind: "lineage",
+      threadId,
+      turnId: turn.turnId,
+      nodeId: getNodeId(threadId, turn.turnId),
+    });
+  }
+  return into;
+}
+
+export function getContextStack(state, threadId, turnId = null) {
+  if (!getNodeSnapshot(state, threadId, turnId)) {
+    return [];
+  }
+  const lineageEntries = buildLineageEntries(state, threadId, turnId);
+  const seenImports = new Set();
+  const importedEntries = [];
+  for (const entry of lineageEntries) {
+    const turnSnapshot = getNodeSnapshot(state, entry.threadId, entry.turnId);
+    for (const link of turnSnapshot?.contextLinks || []) {
+      const nodeId = getNodeId(link.sourceThreadId, link.sourceTurnId);
+      if (seenImports.has(nodeId)) {
+        continue;
+      }
+      seenImports.add(nodeId);
+      importedEntries.push({
+        kind: "import",
+        threadId: link.sourceThreadId,
+        turnId: link.sourceTurnId,
+        nodeId,
+        importedIntoNodeId: entry.nodeId,
+      });
+    }
+  }
+  return [...lineageEntries, ...importedEntries]
+    .map((entry) => {
+      const entrySnapshot = getNodeSnapshot(state, entry.threadId, entry.turnId);
+      if (!entrySnapshot?.turn) {
+        return null;
+      }
+      return {
+        ...entry,
+        snapshot: entrySnapshot,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function getSelectedContextStack(state) {
+  const selected = getSelectedNode(state);
+  if (!selected?.thread) {
+    return [];
+  }
+  return getContextStack(state, selected.thread.threadId, selected.turn?.turnId || null);
+}
+
+export function getCompareSnapshots(state) {
+  const left = parseNodeId(state.compare.leftNodeId);
+  const right = parseNodeId(state.compare.rightNodeId);
+  return {
+    left: left.threadId ? getNodeSnapshot(state, left.threadId, left.turnId) : null,
+    right: right.threadId ? getNodeSnapshot(state, right.threadId, right.turnId) : null,
   };
 }
 

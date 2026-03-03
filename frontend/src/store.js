@@ -26,7 +26,13 @@ function ensureSelection(state) {
     state.selectedThreadId = null;
     state.selectedNodeId = null;
     state.expandedTurnKey = null;
-    state.openTurnMenuKey = null;
+    state.forcedBranchNodeId = null;
+    state.pendingMergeSourceNodeId = null;
+    state.compare = {
+      open: false,
+      leftNodeId: null,
+      rightNodeId: null,
+    };
     return;
   }
 
@@ -53,8 +59,20 @@ function ensureSelection(state) {
   if (state.expandedTurnKey && !nodeExists(state, state.expandedTurnKey)) {
     state.expandedTurnKey = null;
   }
-  if (state.openTurnMenuKey && !nodeExists(state, state.openTurnMenuKey)) {
-    state.openTurnMenuKey = null;
+  if (state.forcedBranchNodeId && !nodeExists(state, state.forcedBranchNodeId)) {
+    state.forcedBranchNodeId = null;
+  }
+  if (state.pendingMergeSourceNodeId && !nodeExists(state, state.pendingMergeSourceNodeId)) {
+    state.pendingMergeSourceNodeId = null;
+  }
+  if (state.compare.leftNodeId && !nodeExists(state, state.compare.leftNodeId)) {
+    state.compare.leftNodeId = null;
+  }
+  if (state.compare.rightNodeId && !nodeExists(state, state.compare.rightNodeId)) {
+    state.compare.rightNodeId = null;
+  }
+  if (state.compare.open && !state.compare.leftNodeId && !state.compare.rightNodeId) {
+    state.compare.open = false;
   }
 }
 
@@ -96,7 +114,15 @@ export function createStore() {
     selectedThreadId: null,
     selectedNodeId: null,
     expandedTurnKey: null,
-    openTurnMenuKey: null,
+    viewMode: "focus",
+    composerFocusNonce: 0,
+    forcedBranchNodeId: null,
+    pendingMergeSourceNodeId: null,
+    compare: {
+      open: false,
+      leftNodeId: null,
+      rightNodeId: null,
+    },
     lastEventId: 0,
     connectionStatus: "connecting",
     importModal: {
@@ -152,15 +178,33 @@ export function createStore() {
       state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
       state.selectedThreadId = pickDefaultThreadId(state, state.selectedConversationId);
       state.selectedNodeId = pickDefaultNodeId(state, state.selectedThreadId);
-      state.openTurnMenuKey = null;
+      state.forcedBranchNodeId = null;
+      state.pendingMergeSourceNodeId = null;
+      state.compare = {
+        open: false,
+        leftNodeId: null,
+        rightNodeId: null,
+      };
       ensureModalState(state);
       emit();
     },
     selectNode(threadId, turnId = null) {
-      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      const nextConversationId = getConversationRootId(state, threadId) || threadId;
+      const nextNodeId = getNodeId(threadId, turnId);
+      if (state.selectedConversationId && state.selectedConversationId !== nextConversationId) {
+        state.pendingMergeSourceNodeId = null;
+        state.compare = {
+          open: false,
+          leftNodeId: null,
+          rightNodeId: null,
+        };
+      }
+      state.selectedConversationId = nextConversationId;
       state.selectedThreadId = threadId;
-      state.selectedNodeId = getNodeId(threadId, turnId);
-      state.openTurnMenuKey = null;
+      state.selectedNodeId = nextNodeId;
+      if (state.forcedBranchNodeId && state.forcedBranchNodeId !== nextNodeId) {
+        state.forcedBranchNodeId = null;
+      }
       ensureModalState(state);
       emit();
     },
@@ -170,12 +214,77 @@ export function createStore() {
       state.selectedThreadId = threadId;
       state.selectedNodeId = key;
       state.expandedTurnKey = state.expandedTurnKey === key ? null : key;
-      state.openTurnMenuKey = null;
       emit();
     },
-    toggleTurnMenu(threadId, turnId) {
-      const key = getNodeId(threadId, turnId);
-      state.openTurnMenuKey = state.openTurnMenuKey === key ? null : key;
+    setViewMode(mode) {
+      state.viewMode = mode === "map" ? "map" : "focus";
+      emit();
+    },
+    requestComposerFocus() {
+      state.composerFocusNonce += 1;
+      emit();
+    },
+    armBranchFromNode(threadId, turnId = null) {
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = threadId;
+      state.selectedNodeId = getNodeId(threadId, turnId);
+      state.forcedBranchNodeId = getNodeId(threadId, turnId);
+      state.composerFocusNonce += 1;
+      emit();
+    },
+    clearBranchIntent() {
+      state.forcedBranchNodeId = null;
+      emit();
+    },
+    startMergeFromNode(threadId, turnId = null) {
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = threadId;
+      state.selectedNodeId = getNodeId(threadId, turnId);
+      state.pendingMergeSourceNodeId = getNodeId(threadId, turnId);
+      state.viewMode = "map";
+      emit();
+    },
+    clearPendingMerge() {
+      state.pendingMergeSourceNodeId = null;
+      emit();
+    },
+    openCompare(nodeId) {
+      state.compare = {
+        open: true,
+        leftNodeId: nodeId,
+        rightNodeId: null,
+      };
+      emit();
+    },
+    setCompareRight(nodeId) {
+      if (!state.compare.open || !state.compare.leftNodeId) {
+        state.compare = {
+          open: true,
+          leftNodeId: nodeId,
+          rightNodeId: null,
+        };
+      } else if (state.compare.leftNodeId !== nodeId) {
+        state.compare.rightNodeId = nodeId;
+      }
+      emit();
+    },
+    swapCompareSides() {
+      if (!state.compare.open || !state.compare.leftNodeId || !state.compare.rightNodeId) {
+        return;
+      }
+      state.compare = {
+        ...state.compare,
+        leftNodeId: state.compare.rightNodeId,
+        rightNodeId: state.compare.leftNodeId,
+      };
+      emit();
+    },
+    closeCompare() {
+      state.compare = {
+        open: false,
+        leftNodeId: null,
+        rightNodeId: null,
+      };
       emit();
     },
     applyBootstrap(payload) {

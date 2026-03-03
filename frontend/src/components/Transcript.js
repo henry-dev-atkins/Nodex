@@ -128,6 +128,7 @@ export function renderTranscript(container, state, handlers) {
   const focusCutoffIdx = focusTurn?.idx || turns[turns.length - 1]?.idx || 0;
   const branchLabel = getBranchLabel(state, thread.threadId);
   const transcriptEntries = buildTranscriptEntries(state, thread.threadId);
+  const forcedBranchActive = state.forcedBranchNodeId && state.forcedBranchNodeId === selectedNode?.nodeId;
   const activeContextCount = turns
     .filter((turn) => turn.idx <= focusCutoffIdx)
     .reduce((count, turn) => count + getContextLinks(turn).length, 0);
@@ -138,22 +139,22 @@ export function renderTranscript(container, state, handlers) {
         <strong>${branchLabel} | Start | 0 imports</strong>
       </section>
       <section class="transcript-composer">
-        <form id="transcript-composer-form" class="composer-form">
-          <textarea id="transcript-composer-input" rows="4" placeholder="Start the first turn on this branch..."></textarea>
+        <form data-transcript-composer-form="1" class="composer-form">
+          <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
           <div class="composer-actions">
-            <button id="delete-conversation-button" class="danger-button" type="button">Delete</button>
-            <button id="transcript-composer-submit" class="primary-button" type="submit">Send</button>
+            <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
+            <button class="primary-button" type="submit">Send</button>
           </div>
         </form>
       </section>
     `;
 
-    container.querySelector("#delete-conversation-button")?.addEventListener("click", () => {
+    container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
       handlers.onDeleteConversation(selectedNode.conversationId || thread.threadId);
     });
-    container.querySelector("#transcript-composer-form")?.addEventListener("submit", async (event) => {
+    container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const input = container.querySelector("#transcript-composer-input");
+      const input = container.querySelector("[data-transcript-composer-input]");
       const text = input?.value?.trim() || "";
       if (!text) {
         return;
@@ -181,12 +182,11 @@ export function renderTranscript(container, state, handlers) {
         const blocks = buildBlocks(turn, events, approvals);
         const summary = summarizeTurn(turn, blocks, approvals);
         const contextLinks = getContextLinks(turn);
+        const isCurrentBranchTurn = rowThreadId === thread.threadId;
         const selected =
           selectedNode?.thread?.threadId === rowThreadId && selectedNode?.turn?.turnId === turn.turnId ? "selected" : "";
         const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
-        const isCurrentBranchTurn = rowThreadId === thread.threadId;
-        const isExpanded = isCurrentBranchTurn && state.expandedTurnKey === getNodeId(rowThreadId, turn.turnId);
-        const menuOpen = isCurrentBranchTurn && state.openTurnMenuKey === getNodeId(rowThreadId, turn.turnId);
+        const isExpanded = state.expandedTurnKey === getNodeId(rowThreadId, turn.turnId);
         const hasContext = contextLinks.length > 0;
         const isActiveContextTurn = isCurrentBranchTurn && hasContext && turn.idx <= focusCutoffIdx;
         const statusMark = getStatusMark(turn, approvals);
@@ -197,7 +197,7 @@ export function renderTranscript(container, state, handlers) {
           .map((block) => block.plainText)
           .filter(Boolean);
         return `
-          <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}" data-turn-current="${isCurrentBranchTurn ? "1" : "0"}">
+          <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}">
             <div class="turn-row-head" data-turn-head="${rowThreadId}:${turn.turnId}">
               <div class="turn-row-main">
                 <span class="turn-row-branch-badge">${escapeHtml(rowBranchLabel)}</span>
@@ -210,21 +210,7 @@ export function renderTranscript(container, state, handlers) {
                 ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">${contextLinks.length} link</span>` : ""}
               </div>
               <div class="turn-row-actions">
-                ${
-                  isCurrentBranchTurn
-                    ? `<button type="button" class="turn-row-menu-trigger ${menuOpen ? "is-open" : ""}" data-turn-menu="${turn.turnId}" aria-label="More actions">...</button>`
-                    : ""
-                }
-                ${
-                  menuOpen
-                    ? `
-                      <div class="turn-row-menu">
-                        <button type="button" class="turn-row-menu-item" data-turn-reply="${turn.turnId}">${headTurn?.turnId === turn.turnId ? "Continue here" : "Branch from here"}</button>
-                        <button type="button" class="turn-row-menu-item" data-turn-expand="${turn.turnId}">${isExpanded ? "Collapse" : "Expand"}</button>
-                      </div>
-                    `
-                    : ""
-                }
+                <span class="turn-row-expand-hint">${isExpanded ? "Hide" : "Open"}</span>
               </div>
             </div>
             ${pendingApprovals.length ? `<div class="turn-approval-stack">${renderApprovalStrip(pendingApprovals)}</div>` : ""}
@@ -279,15 +265,30 @@ export function renderTranscript(container, state, handlers) {
       })
       .join("")}
     <section class="transcript-composer">
-      <form id="transcript-composer-form" class="composer-form">
+      <div class="transcript-composer-intent">
+        ${
+          forcedBranchActive && selectedTurn
+            ? `Branching from ${escapeHtml(branchLabel)} T${selectedTurn.idx}`
+            : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
+              ? `Replying from ${escapeHtml(branchLabel)} T${selectedTurn.idx} will create a new branch`
+              : `Continuing ${escapeHtml(branchLabel)}`
+        }
+      </div>
+      <form data-transcript-composer-form="1" class="composer-form">
         <textarea
-          id="transcript-composer-input"
+          data-transcript-composer-input="1"
           rows="4"
-          placeholder="${escapeHtml(selectedTurn && headTurn?.turnId !== selectedTurn.turnId ? `Send from T${selectedTurn.idx} to create a new branch...` : "Send the next message on this branch...")}"
+          placeholder="${escapeHtml(
+            forcedBranchActive && selectedTurn
+              ? `Create a new branch from T${selectedTurn.idx}...`
+              : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
+                ? `Send from T${selectedTurn.idx} to create a new branch...`
+                : "Send the next message on this branch...",
+          )}"
         ></textarea>
         <div class="composer-actions">
-          <button id="delete-conversation-button" class="danger-button" type="button">Delete</button>
-          <button id="transcript-composer-submit" class="primary-button" type="submit">Send</button>
+          <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
+          <button class="primary-button" type="submit">Send</button>
         </div>
       </form>
     </section>
@@ -298,12 +299,11 @@ export function renderTranscript(container, state, handlers) {
       if (event.target.closest("button")) {
         return;
       }
-      const article = element.closest("[data-turn-node]");
-      if (!article || article.dataset.turnCurrent !== "1") {
+      const [threadId, turnId] = element.dataset.turnHead.split(":");
+      const shouldToggle = handlers.onSelectNode(threadId, turnId);
+      if (shouldToggle === false) {
         return;
       }
-      const [threadId, turnId] = element.dataset.turnHead.split(":");
-      handlers.onSelectNode(threadId, turnId);
       handlers.onToggleTurn(threadId, turnId);
     });
   });
@@ -320,29 +320,6 @@ export function renderTranscript(container, state, handlers) {
     });
   });
 
-  container.querySelectorAll("[data-turn-menu]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      handlers.onToggleTurnMenu(thread.threadId, button.dataset.turnMenu);
-    });
-  });
-
-  container.querySelectorAll("[data-turn-reply]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      handlers.onSelectNode(thread.threadId, button.dataset.turnReply);
-      handlers.onToggleTurnMenu(thread.threadId, button.dataset.turnReply);
-    });
-  });
-
-  container.querySelectorAll("[data-turn-expand]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      handlers.onSelectNode(thread.threadId, button.dataset.turnExpand);
-      handlers.onToggleTurn(thread.threadId, button.dataset.turnExpand);
-    });
-  });
-
   container.querySelectorAll("[data-approval-decision]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
@@ -350,13 +327,13 @@ export function renderTranscript(container, state, handlers) {
     });
   });
 
-  container.querySelector("#delete-conversation-button")?.addEventListener("click", () => {
+  container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
     handlers.onDeleteConversation(selectedNode?.conversationId || thread.threadId);
   });
 
-  container.querySelector("#transcript-composer-form")?.addEventListener("submit", async (event) => {
+  container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const input = container.querySelector("#transcript-composer-input");
+    const input = container.querySelector("[data-transcript-composer-input]");
     const text = input?.value?.trim() || "";
     if (!text) {
       return;

@@ -29,17 +29,33 @@
             <h2 id="thread-title">No conversation</h2>
             <span id="thread-turn-label" class="topbar-turn">Start</span>
           </div>
-          <span id="connection-status" class="status-dot is-idle" title="Connecting" aria-label="Connecting"></span>
+          <div class="topbar-actions">
+            <div class="view-toggle" role="tablist" aria-label="View mode">
+              <button id="focus-mode-button" class="ghost-button" type="button">Focus</button>
+              <button id="map-mode-button" class="ghost-button" type="button">Map</button>
+            </div>
+            <span id="connection-status" class="status-dot is-idle" title="Connecting" aria-label="Connecting"></span>
+          </div>
         </header>
         <div id="error-banner"></div>
+        <div id="action-bar-root"></div>
+        <div id="compare-panel-root"></div>
 
-        <section class="graph-panel">
-          <div id="graph-view" class="graph-view"></div>
+        <section id="focus-layout" class="focus-layout">
+          <aside id="context-panel" class="context-column"></aside>
+          <section class="transcript-panel">
+            <div id="focus-transcript-view" class="transcript-view"></div>
+          </section>
         </section>
-        <div id="graph-transcript-resizer" class="pane-resizer pane-resizer-horizontal" aria-hidden="true"></div>
 
-        <section class="transcript-panel">
-          <div id="transcript-view" class="transcript-view"></div>
+        <section id="map-layout" class="map-layout">
+          <section class="graph-panel">
+            <div id="graph-view" class="graph-view"></div>
+          </section>
+          <div id="graph-transcript-resizer" class="pane-resizer pane-resizer-horizontal" aria-hidden="true"></div>
+          <section class="transcript-panel">
+            <div id="map-transcript-view" class="transcript-view"></div>
+          </section>
         </section>
       </main>
     </div>

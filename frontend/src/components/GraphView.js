@@ -242,6 +242,7 @@ export function renderGraphView(container, state, handlers) {
   const baseDepth = buildDepthMap(state, threads, childrenMap, conversation.threadId);
   const selectedNode = getSelectedNode(state);
   const activeContext = buildActiveContextState(state);
+  const pendingMergeNodeId = state.pendingMergeSourceNodeId;
   const viewportState = getViewport(conversation.threadId);
   const laneGap = 244;
   const rowGap = 88;
@@ -359,6 +360,11 @@ export function renderGraphView(container, state, handlers) {
 
   container.innerHTML = `
     <div class="graph-toolbar">
+      ${
+        pendingMergeNodeId
+          ? '<div class="graph-toolbar-note">Merge armed. Click a destination turn to create a linked child turn.</div>'
+          : ""
+      }
       <div class="graph-controls">
         <button type="button" class="ghost-button graph-control-button" data-graph-zoom="out">-</button>
         <span class="graph-zoom-readout" data-graph-zoom-readout>${Math.round(viewportState.scale * 100)}%</span>
@@ -402,6 +408,7 @@ export function renderGraphView(container, state, handlers) {
                 node.running ? "is-running" : "",
                 node.denied ? "is-denied" : "",
                 node.contextLinkCount ? "has-import" : "",
+                pendingMergeNodeId === node.id ? "is-merge-source" : "",
                 isLineageNode ? "is-lineage-node" : "",
                 activeContextSource ? "is-context-source" : "",
                 activeContextDestination ? "is-context-destination" : "",

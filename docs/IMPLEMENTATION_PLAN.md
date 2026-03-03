@@ -8,7 +8,8 @@ Source spec: [UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrappe
 
 - Reduce UI noise and visual bulk.
 - Replace text-driven context blending with direct DAG manipulation.
-- Make transcript and graph the only primary interaction surfaces.
+- Make the active path and active context obvious without requiring graph interpretation.
+- Split day-to-day reading from structural DAG editing.
 - Add backend/runtime limits required for scaling.
 - Keep the documentation aligned with current state and target state.
 
@@ -17,6 +18,9 @@ Source spec: [UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrappe
 - `python -m codex_ui dev` already exists and remains the canonical dev runner.
 - Context-import preview with secret detection already exists in the backend/frontend flow.
 - The simplified v2 interaction model is now the active UI.
+- The shipped shell now defaults to `Focus` mode, with `Map` mode for structural DAG work.
+- The shipped action model is now explicit: `Continue`, `Branch`, `Merge Into...`, and `Compare`.
+- The shipped transcript is paired with a `Current Context` stack so inherited and imported context are visible without reading the DAG first.
 - The shipped graph uses vertical branch lanes with prompt-labeled node boxes, `Main / Branch n` naming, and persisted manual lane ordering because that proved clearer than number-only nodes.
 - The shipped transcript includes inherited parent-lineage rows so a branch always shows the context it forked from.
 - Long responses are intended to scroll inside bounded detail containers rather than expanding the entire transcript panel.
