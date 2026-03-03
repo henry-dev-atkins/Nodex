@@ -24,9 +24,11 @@ export function renderThreadList(container, state, onSelect) {
       const selected = thread.threadId === state.selectedConversationId ? "selected" : "";
       return `
         <article class="thread-row ${selected}" data-thread-id="${thread.threadId}">
-          <div class="thread-row-title">${escapeHtml(threadLabel(thread))}</div>
+          <div class="thread-row-copy">
+            <div class="thread-row-title">${escapeHtml(threadLabel(thread))}</div>
+            <div class="thread-row-subtitle">${countConversationBranches(state, thread.threadId)} branches | ${countConversationTurns(state, thread.threadId)} turns</div>
+          </div>
           <div class="thread-row-meta">
-            <span>${countConversationBranches(state, thread.threadId)}b | ${countConversationTurns(state, thread.threadId)}t</span>
             <span class="status-dot ${statusClass(thread.status)}" title="${escapeHtml(thread.status || "idle")}" aria-hidden="true"></span>
           </div>
         </article>

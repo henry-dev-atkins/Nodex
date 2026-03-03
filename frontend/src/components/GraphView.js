@@ -363,7 +363,7 @@ export function renderGraphView(container, state, handlers) {
       ${
         pendingMergeNodeId
           ? '<div class="graph-toolbar-note">Merge armed. Select a destination turn.</div>'
-          : ""
+          : '<div class="graph-toolbar-note">Drag lanes to reorder. Drag from a node handle to create a child turn.</div>'
       }
       <div class="graph-controls">
         <button type="button" class="ghost-button graph-control-button" data-graph-zoom="out">-</button>

@@ -161,6 +161,7 @@ export function renderTranscript(container, state, handlers) {
   if (!turns.length) {
     container.innerHTML = `
       <section class="transcript-header-line" title="This transcript follows the selected branch.">
+        <span class="transcript-header-kicker">Focus</span>
         <strong>${branchLabel} / Start</strong>
       </section>
       <section class="transcript-composer">
@@ -194,6 +195,7 @@ export function renderTranscript(container, state, handlers) {
 
   container.innerHTML = `
     <section class="transcript-header-line" title="Imported-link highlighting updates as you browse the branch.">
+      <span class="transcript-header-kicker">Focus</span>
       <strong>${branchLabel} / ${focusTurn ? `T${focusTurn.idx}` : "Start"}${activeContextCount ? ` / +${activeContextCount}` : ""}</strong>
     </section>
     ${transcriptEntries
