@@ -1,4 +1,4 @@
-import { buildBlocks, escapeHtml, formatText, humanizeTurnStatus, normalizeText, summarizeText, summarizeTurn, threadLabel, truncateText } from "../rendering.js";
+import { buildBlocks, escapeHtml, formatText, humanizeTurnStatus, normalizeText, summarizeText, summarizeTurn, truncateText } from "../rendering.js";
 import { getApprovalsForTurn, getBranchLabel, getHeadTurn, getNodeId, getSelectedNode, getSelectedThread, getTurns } from "../selectors.js";
 
 function getContextLinks(turn) {
@@ -81,10 +81,9 @@ function renderContextSummary(state, contextLinks) {
       <ul class="turn-detail-list">
         ${contextLinks
           .map((link) => {
-            const sourceThread = state.threads[link.sourceThreadId];
             const sourceTurn = getTurns(state, link.sourceThreadId).find((item) => item.turnId === link.sourceTurnId);
             const label = sourceTurn ? `T${sourceTurn.idx}` : link.sourceTurnId.slice(0, 8);
-            return `<li>${escapeHtml(sourceThread ? threadLabel(sourceThread) : link.sourceThreadId)} / ${escapeHtml(label)}</li>`;
+            return `<li>${escapeHtml(getBranchLabel(state, link.sourceThreadId))} / ${escapeHtml(label)}</li>`;
           })
           .join("")}
       </ul>
@@ -103,14 +102,40 @@ function buildTranscriptEntries(state, threadId, targetThreadId = threadId, cuto
   const turns = getTurns(state, threadId);
   const cutoffIdx = cutoffTurnId ? turns.find((turn) => turn.turnId === cutoffTurnId)?.idx ?? turns.length : null;
   const visibleTurns = cutoffIdx === null ? turns : turns.filter((turn) => turn.idx <= cutoffIdx);
-  return [
-    ...inheritedEntries,
-    ...visibleTurns.map((turn) => ({
-      threadId,
-      turn,
-      inherited: threadId !== targetThreadId,
-    })),
-  ];
+  const entries = [...inheritedEntries];
+  const seenNodeIds = new Set(entries.map((entry) => getNodeId(entry.threadId, entry.turn.turnId)));
+
+  for (const turn of visibleTurns) {
+    for (const link of getContextLinks(turn)) {
+      const importedTurn = getTurns(state, link.sourceThreadId).find((item) => item.turnId === link.sourceTurnId);
+      const importedNodeId = getNodeId(link.sourceThreadId, link.sourceTurnId);
+      if (!importedTurn || seenNodeIds.has(importedNodeId)) {
+        continue;
+      }
+      entries.push({
+        threadId: link.sourceThreadId,
+        turn: importedTurn,
+        inherited: false,
+        imported: true,
+        importedIntoTurnId: turn.turnId,
+        importedIntoTurnIdx: turn.idx,
+      });
+      seenNodeIds.add(importedNodeId);
+    }
+
+    const nodeId = getNodeId(threadId, turn.turnId);
+    if (!seenNodeIds.has(nodeId)) {
+      entries.push({
+        threadId,
+        turn,
+        inherited: threadId !== targetThreadId,
+        imported: false,
+      });
+      seenNodeIds.add(nodeId);
+    }
+  }
+
+  return entries;
 }
 
 export function renderTranscript(container, state, handlers) {
@@ -136,7 +161,7 @@ export function renderTranscript(container, state, handlers) {
   if (!turns.length) {
     container.innerHTML = `
       <section class="transcript-header-line" title="This transcript follows the selected branch.">
-        <strong>${branchLabel} | Start | 0 imports</strong>
+        <strong>${branchLabel} / Start</strong>
       </section>
       <section class="transcript-composer">
         <form data-transcript-composer-form="1" class="composer-form">
@@ -169,7 +194,7 @@ export function renderTranscript(container, state, handlers) {
 
   container.innerHTML = `
     <section class="transcript-header-line" title="Imported-link highlighting updates as you browse the branch.">
-      <strong>${branchLabel} | ${focusTurn ? `T${focusTurn.idx}` : "Start"} | ${activeContextCount} import${activeContextCount === 1 ? "" : "s"}</strong>
+      <strong>${branchLabel} / ${focusTurn ? `T${focusTurn.idx}` : "Start"}${activeContextCount ? ` / +${activeContextCount}` : ""}</strong>
     </section>
     ${transcriptEntries
       .map((entry) => {
@@ -188,26 +213,29 @@ export function renderTranscript(container, state, handlers) {
         const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
         const isExpanded = state.expandedTurnKey === getNodeId(rowThreadId, turn.turnId);
         const hasContext = contextLinks.length > 0;
+        const isImportedEntry = Boolean(entry.imported);
         const isActiveContextTurn = isCurrentBranchTurn && hasContext && turn.idx <= focusCutoffIdx;
         const statusMark = getStatusMark(turn, approvals);
         const promptPreview = summarizeText(summary.prompt || "No prompt", 88);
         const responsePreview = truncateText(getTurnResponse(blocks, summary) || "No response yet.", 110);
+        const showBranchBadge = entry.inherited || entry.imported;
         const toolLines = blocks
           .filter((block) => block.kind === "tool" || block.kind === "error" || block.kind === "warning")
           .map((block) => block.plainText)
           .filter(Boolean);
         return `
-          <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}">
+          <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isImportedEntry ? "turn-row-imported-entry" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}">
             <div class="turn-row-head" data-turn-head="${rowThreadId}:${turn.turnId}">
               <div class="turn-row-main">
-                <span class="turn-row-branch-badge">${escapeHtml(rowBranchLabel)}</span>
+                ${showBranchBadge ? `<span class="turn-row-branch-badge">${escapeHtml(rowBranchLabel)}</span>` : ""}
                 <span class="turn-row-id">T${turn.idx}</span>
                 <span class="turn-row-mark ${statusMark.tone}" title="${escapeHtml(statusMark.title)}">${statusMark.label}</span>
                 <div class="turn-row-preview-stack">
                   <div class="turn-row-prompt">${escapeHtml(promptPreview)}</div>
                   <div class="turn-row-response">${escapeHtml(responsePreview)}</div>
                 </div>
-                ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">${contextLinks.length} link</span>` : ""}
+                ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">+${contextLinks.length}</span>` : ""}
+                ${isImportedEntry ? `<span class="turn-row-link-flag" title="Imported into T${entry.importedIntoTurnIdx}">in T${entry.importedIntoTurnIdx}</span>` : ""}
               </div>
               <div class="turn-row-actions">
                 <span class="turn-row-expand-hint">${isExpanded ? "Hide" : "Open"}</span>
@@ -268,10 +296,10 @@ export function renderTranscript(container, state, handlers) {
       <div class="transcript-composer-intent">
         ${
           forcedBranchActive && selectedTurn
-            ? `Branching from ${escapeHtml(branchLabel)} T${selectedTurn.idx}`
+            ? `Branch from T${selectedTurn.idx}`
             : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
-              ? `Replying from ${escapeHtml(branchLabel)} T${selectedTurn.idx} will create a new branch`
-              : `Continuing ${escapeHtml(branchLabel)}`
+              ? `Reply from T${selectedTurn.idx} to branch`
+              : `Continue ${escapeHtml(branchLabel)}`
         }
       </div>
       <form data-transcript-composer-form="1" class="composer-form">

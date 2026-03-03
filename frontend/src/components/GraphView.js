@@ -247,7 +247,7 @@ export function renderGraphView(container, state, handlers) {
   const laneGap = 244;
   const rowGap = 88;
   const leftPadding = 148;
-  const topPadding = 68;
+  const topPadding = 56;
   const nodes = [];
   const primaryEdges = [];
   const contextEdges = [];
@@ -276,7 +276,7 @@ export function renderGraphView(container, state, handlers) {
         x,
         y: topPadding + threadBase * rowGap,
         title: "Start here",
-        meta: "Empty branch",
+        meta: "Start",
         selected: selectedNode?.thread?.threadId === thread.threadId && !selectedNode?.turn,
         running: thread.status === "running" || thread.status === "inProgress",
         contextLinkCount: 0,
@@ -299,7 +299,7 @@ export function renderGraphView(container, state, handlers) {
         x,
         y: topPadding + (threadBase + index) * rowGap,
         title: summarizeText(turn.userText || "No prompt", 42),
-        meta: `T${turn.idx}${contextLinks.length ? ` | ${contextLinks.length} import${contextLinks.length === 1 ? "" : "s"}` : ""}`,
+        meta: `T${turn.idx}${contextLinks.length ? ` +${contextLinks.length}` : ""}`,
         selected:
           selectedNode?.thread?.threadId === thread.threadId &&
           (selectedNode?.turn?.turnId || selectedNode?.headTurn?.turnId) === turn.turnId,
@@ -369,7 +369,7 @@ export function renderGraphView(container, state, handlers) {
         <button type="button" class="ghost-button graph-control-button" data-graph-zoom="out">-</button>
         <span class="graph-zoom-readout" data-graph-zoom-readout>${Math.round(viewportState.scale * 100)}%</span>
         <button type="button" class="ghost-button graph-control-button" data-graph-zoom="in">+</button>
-        <button type="button" class="ghost-button graph-control-button" data-graph-zoom="reset">Reset</button>
+        <button type="button" class="ghost-button graph-control-button" data-graph-zoom="reset" title="Reset zoom">1:1</button>
       </div>
     </div>
     <div class="graph-viewport" data-graph-viewport>
@@ -379,9 +379,8 @@ export function renderGraphView(container, state, handlers) {
           ${laneLabelRows
             .map(
               ({ thread, x, branchLabel, branchSummary }) => `
-                <g class="graph-lane-header" data-lane-thread-id="${thread.threadId}" transform="translate(${x - NODE_WIDTH / 2}, 26)">
+                <g class="graph-lane-header" data-lane-thread-id="${thread.threadId}" transform="translate(${x - NODE_WIDTH / 2}, 24)" title="${escapeHtml(branchSummary)}">
                   <text class="graph-lane-label" x="0" y="0">${escapeHtml(branchLabel)}</text>
-                  <text class="graph-lane-subtitle" x="0" y="14">${escapeHtml(branchSummary)}</text>
                 </g>
               `,
             )
