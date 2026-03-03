@@ -50,7 +50,7 @@ export function renderContextPanel(container, state, handlers) {
   container.innerHTML = `
     <div class="context-panel">
       <div class="context-panel-header">
-        <h2>Current Context</h2>
+        <h2>Context</h2>
         <span>${lineage.length} path | ${imports.length} import${imports.length === 1 ? "" : "s"}</span>
       </div>
       ${renderContextGroup("Path", lineage)}

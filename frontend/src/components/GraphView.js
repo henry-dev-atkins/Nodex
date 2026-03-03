@@ -362,7 +362,7 @@ export function renderGraphView(container, state, handlers) {
     <div class="graph-toolbar">
       ${
         pendingMergeNodeId
-          ? '<div class="graph-toolbar-note">Merge armed. Click a destination turn to create a linked child turn.</div>'
+          ? '<div class="graph-toolbar-note">Merge armed. Select a destination turn.</div>'
           : ""
       }
       <div class="graph-controls">

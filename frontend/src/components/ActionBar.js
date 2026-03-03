@@ -13,17 +13,17 @@ export function renderActionBar(container, state, handlers) {
   const pendingMergeActive = state.pendingMergeSourceNodeId && state.pendingMergeSourceNodeId === selectedNode?.nodeId;
   const branchLabel = selectedThread ? getBranchLabel(state, selectedThread.threadId) : "Branch";
   const subtitle = pendingMergeActive
-    ? "Pick a destination turn in Map mode to merge this context into."
+    ? "Map mode is armed. Pick a destination turn."
     : forcedBranchActive
-      ? `The next send will branch from ${branchLabel} ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}.`
+      ? `Next send branches from ${branchLabel} ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}.`
       : selectedNode?.turn
-        ? `${branchLabel} ${selectedNode.turn.idx === headTurn?.idx ? `T${selectedNode.turn.idx} is the current head.` : `T${selectedNode.turn.idx} is an earlier turn.`}`
+        ? `${branchLabel} ${selectedNode.turn.idx === headTurn?.idx ? `T${selectedNode.turn.idx} is current.` : `T${selectedNode.turn.idx} is earlier.`}`
         : "Select a turn to branch, merge, or compare it.";
 
   container.innerHTML = `
     <section class="action-bar">
       <div class="action-bar-copy">
-        <strong>Next action</strong>
+        <span class="action-bar-label">Actions</span>
         <span>${escapeHtml(subtitle)}</span>
       </div>
       <div class="action-bar-buttons">

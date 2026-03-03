@@ -26,7 +26,7 @@ export function renderThreadList(container, state, onSelect) {
         <article class="thread-row ${selected}" data-thread-id="${thread.threadId}">
           <div class="thread-row-title">${escapeHtml(threadLabel(thread))}</div>
           <div class="thread-row-meta">
-            <span>${countConversationBranches(state, thread.threadId)} branches | ${countConversationTurns(state, thread.threadId)} turns</span>
+            <span>${countConversationBranches(state, thread.threadId)}b | ${countConversationTurns(state, thread.threadId)}t</span>
             <span class="status-dot ${statusClass(thread.status)}" title="${escapeHtml(thread.status || "idle")}" aria-hidden="true"></span>
           </div>
         </article>

@@ -25,6 +25,7 @@ The README describes the current shipped behavior. The spec and implementation p
 
 - Left sidebar: compact conversation rows with branch/turn counts and status dots
 - Header: one-line conversation title plus current `Main / Branch n` label, turn, mode toggle, and connection-status dot
+- Visual system: flat neutral surfaces, thin borders, low-radius shapes, and accent color reserved mainly for active/imported/running states
 - Focus mode: explicit `Continue`, `Branch`, `Merge Into...`, and `Compare` actions above a `Current Context` panel plus the active branch transcript
 - Map mode: zoomable and pannable vertical DAG with prompt-summary boxes, draggable branch lanes, solid lineage edges, dashed imported-context edges, and drag handles for child-turn creation or merge-back into another branch head
 - Transcript: compact `Tn` rows with summarized prompt previews, response previews, inherited parent-context rows, and scrollable expanded responses

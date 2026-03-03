@@ -23,20 +23,20 @@ export function renderImportPreviewModal(container, state, handlers) {
         <div class="modal-header">
           <div>
             <h3>Create Child Turn</h3>
-            <p class="modal-subtle">${escapeHtml(sourceThread ? threadLabel(sourceThread) : "Unknown source")} -> ${escapeHtml(targetThread ? threadLabel(targetThread) : "Unknown target")}</p>
+            <p class="modal-subtle">${escapeHtml(sourceThread ? threadLabel(sourceThread) : "Unknown source")} to ${escapeHtml(targetThread ? threadLabel(targetThread) : "Unknown target")}</p>
           </div>
           <button id="close-import-modal" class="ghost-button">Close</button>
         </div>
 
         <div class="modal-parent-list">
-          <label class="modal-parent-row">
-            <input type="checkbox" checked disabled />
-            <span>Primary parent: ${targetTurn ? `T${targetTurn.idx}` : "Unknown"}</span>
-          </label>
-          <label class="modal-parent-row">
-            <input type="checkbox" checked disabled />
-            <span>Imported context: ${sourceTurn ? `T${sourceTurn.idx}` : "Unknown"}</span>
-          </label>
+          <div class="modal-parent-row">
+            <span class="modal-parent-mark">Parent</span>
+            <span>${targetTurn ? `T${targetTurn.idx}` : "Unknown"}</span>
+          </div>
+          <div class="modal-parent-row">
+            <span class="modal-parent-mark">Import</span>
+            <span>${sourceTurn ? `T${sourceTurn.idx}` : "Unknown"}</span>
+          </div>
         </div>
 
         ${
@@ -67,7 +67,7 @@ export function renderImportPreviewModal(container, state, handlers) {
               <textarea id="import-preview-text">${previewText}</textarea>
               <div class="modal-actions">
                 <button id="cancel-import" class="ghost-button">Cancel</button>
-                <button id="commit-import" class="primary-button">Create</button>
+                <button id="commit-import" class="primary-button">Create Child</button>
               </div>
             `
             : ""

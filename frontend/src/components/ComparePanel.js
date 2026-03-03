@@ -40,11 +40,11 @@ export function renderComparePanel(container, state, handlers) {
     <section class="compare-panel">
       <div class="compare-panel-header">
         <div>
-          <h2>Compare Turns</h2>
-          <span>${waitingForRight ? "Select another turn, then press Compare again." : "Side-by-side prompt and response summaries."}</span>
+          <h2>Compare</h2>
+          <span>${waitingForRight ? "Select another turn to finish the pair." : "Prompt and response summaries side by side."}</span>
         </div>
         <div class="compare-panel-actions">
-          <button type="button" class="ghost-button" data-compare-action="use-current" ${left ? "" : "disabled"}>Use Current As Right</button>
+          <button type="button" class="ghost-button" data-compare-action="use-current" ${left ? "" : "disabled"}>Use Current</button>
           <button type="button" class="ghost-button" data-compare-action="swap" ${left && right ? "" : "disabled"}>Swap</button>
           <button type="button" class="ghost-button" data-compare-action="close">Close</button>
         </div>
