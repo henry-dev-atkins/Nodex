@@ -1,79 +1,33 @@
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+import { escapeHtml, threadLabel } from "../rendering.js";
+import { countConversationBranches, countConversationTurns, getConversationRoots } from "../selectors.js";
 
-function normalizeText(value) {
-  const text = String(value ?? "");
-  const hasUtf8Mojibake =
-    text.includes(String.fromCharCode(195)) ||
-    text.includes(String.fromCharCode(194)) ||
-    text.includes(String.fromCharCode(226));
-  if (!hasUtf8Mojibake) {
-    return text;
+function statusClass(status) {
+  if (status === "running" || status === "inProgress") {
+    return "is-running";
   }
-  try {
-    const bytes = Uint8Array.from(Array.from(text), (char) => char.codePointAt(0));
-    return new TextDecoder("utf-8").decode(bytes);
-  } catch {
-    return text;
+  if (status === "error" || status === "dead") {
+    return "is-error";
   }
-}
-
-function humanizeStatus(status) {
-  if (status === "inProgress" || status === "running") {
-    return "running";
-  }
-  if (status === "completed") {
-    return "completed";
-  }
-  return status || "idle";
-}
-
-function buildDepthMap(threads) {
-  const byId = Object.fromEntries(threads.map((thread) => [thread.threadId, thread]));
-  const depthMap = {};
-  for (const thread of threads) {
-    let depth = 0;
-    let current = thread;
-    while (current.parentThreadId && byId[current.parentThreadId]) {
-      depth += 1;
-      current = byId[current.parentThreadId];
-    }
-    depthMap[thread.threadId] = depth;
-  }
-  return depthMap;
+  return "is-idle";
 }
 
 export function renderThreadList(container, state, onSelect) {
-  const threads = Object.values(state.threads).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  const depthMap = buildDepthMap(threads);
+  const roots = getConversationRoots(state);
 
-  if (!threads.length) {
-    container.innerHTML = '<div class="empty-state">Create a thread to begin.</div>';
+  if (!roots.length) {
+    container.innerHTML = '<div class="empty-state">Create a conversation to begin.</div>';
     return;
   }
 
-  container.innerHTML = threads
+  container.innerHTML = roots
     .map((thread) => {
-      const selected = thread.threadId === state.selectedThreadId ? "selected" : "";
-      const depth = depthMap[thread.threadId] || 0;
-      const preview = normalizeText(
-        thread.metadata?.preview || (thread.parentThreadId ? `Fork of ${thread.parentThreadId.slice(0, 8)}` : thread.threadId.slice(0, 8)),
-      );
+      const selected = thread.threadId === state.selectedConversationId ? "selected" : "";
       return `
-        <article class="thread-card ${selected}" data-thread-id="${thread.threadId}" style="margin-left:${depth * 16}px">
-          <div class="thread-title-row">
-            <strong>${escapeHtml(normalizeText(thread.title || "Untitled thread"))}</strong>
-            <span class="mini-status">${escapeHtml(humanizeStatus(thread.status))}</span>
-          </div>
-          <div class="thread-preview">${escapeHtml(preview)}</div>
-          <div class="thread-meta">
-            <span>${escapeHtml(thread.threadId.slice(0, 8))}</span>
+        <article class="thread-row ${selected}" data-thread-id="${thread.threadId}">
+          <div class="thread-row-title">${escapeHtml(threadLabel(thread))}</div>
+          <div class="thread-row-meta">
+            <span>${countConversationBranches(state, thread.threadId)} branches | ${countConversationTurns(state, thread.threadId)} turns</span>
+            <span class="status-dot ${statusClass(thread.status)}" title="${escapeHtml(thread.status || "idle")}" aria-hidden="true"></span>
           </div>
         </article>
       `;

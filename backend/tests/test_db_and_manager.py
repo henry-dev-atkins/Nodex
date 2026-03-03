@@ -117,6 +117,9 @@ def test_build_transfer_blob_uses_source_thread_turn() -> None:
 
         assert "source prompt" in blob
         assert "source answer" in blob
+        assert "Summary:" in blob
+        assert "Decision:" in blob
+        assert "Result:" in blob
         assert "dest prompt" not in blob
     finally:
         db.close()
@@ -138,12 +141,281 @@ def test_status_normalization() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
+def test_commit_import_preview_links_source_turns_on_destination_turn() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="source", title="Source", createdAt=now, updatedAt=now))
+        db.upsert_thread(ThreadRecord(threadId="dest", title="Dest", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-source-1",
+                threadId="source",
+                idx=1,
+                userText="source prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-source-2",
+                threadId="source",
+                idx=2,
+                userText="follow-up prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+
+        preview = asyncio.run(manager.create_import_preview("source", ["turn-source-1", "turn-source-2"], "dest"))
+
+        async def fake_start_turn(thread_id: str, text: str) -> TurnRecord:
+            turn = TurnRecord(
+                turnId="turn-dest-1",
+                threadId=thread_id,
+                idx=1,
+                userText=text,
+                status="running",
+                startedAt=utc_now(),
+            )
+            db.upsert_turn(turn)
+            return turn
+
+        manager.start_turn = fake_start_turn  # type: ignore[method-assign]
+
+        result = asyncio.run(manager.commit_import_preview(preview.previewId, True, "copied context"))
+        turn = db.get_turn("dest", "turn-dest-1")
+
+        assert result["importedIntoTurnId"] == "turn-dest-1"
+        assert result["turn"]["turnId"] == "turn-dest-1"
+        assert turn is not None
+        assert turn.metadata["contextLinks"] == [
+            {
+                "kind": "contextImport",
+                "sourceThreadId": "source",
+                "sourceTurnId": "turn-source-1",
+                "previewId": preview.previewId,
+                "linkedAt": turn.metadata["contextLinks"][0]["linkedAt"],
+            },
+            {
+                "kind": "contextImport",
+                "sourceThreadId": "source",
+                "sourceTurnId": "turn-source-2",
+                "previewId": preview.previewId,
+                "linkedAt": turn.metadata["contextLinks"][1]["linkedAt"],
+            },
+        ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_commit_import_preview_can_create_child_branch_from_destination_turn() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="source", title="Source", createdAt=now, updatedAt=now))
+        db.upsert_thread(ThreadRecord(threadId="dest", title="Dest", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-source-1",
+                threadId="source",
+                idx=1,
+                userText="source prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-dest-2",
+                threadId="dest",
+                idx=2,
+                userText="dest prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-dest-3",
+                threadId="dest",
+                idx=3,
+                userText="dest head prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.create_import_preview("source", ["turn-source-1"], "dest", dest_turn_id="turn-dest-2")
+        )
+
+        async def fake_branch_from_turn(thread_id: str, turn_id: str, title: str | None = None) -> ThreadRecord:
+            assert thread_id == "dest"
+            assert turn_id == "turn-dest-2"
+            child = ThreadRecord(
+                threadId="dest-child",
+                title="Dest child",
+                createdAt=utc_now(),
+                updatedAt=utc_now(),
+                parentThreadId="dest",
+                forkedFromTurnId="turn-dest-2",
+            )
+            db.upsert_thread(child)
+            return child
+
+        async def fake_start_turn(thread_id: str, text: str) -> TurnRecord:
+            turn = TurnRecord(
+                turnId="turn-child-3",
+                threadId=thread_id,
+                idx=3,
+                userText=text,
+                status="running",
+                startedAt=utc_now(),
+            )
+            db.upsert_turn(turn)
+            return turn
+
+        manager.branch_from_turn = fake_branch_from_turn  # type: ignore[method-assign]
+        manager.start_turn = fake_start_turn  # type: ignore[method-assign]
+
+        result = asyncio.run(manager.commit_import_preview(preview.previewId, True, "copied context"))
+        turn = db.get_turn("dest-child", "turn-child-3")
+
+        assert result["thread"]["threadId"] == "dest-child"
+        assert result["turn"]["threadId"] == "dest-child"
+        assert turn is not None
+        assert turn.metadata["contextLinks"] == [
+            {
+                "kind": "contextImport",
+                "sourceThreadId": "source",
+                "sourceTurnId": "turn-source-1",
+                "previewId": preview.previewId,
+                "linkedAt": turn.metadata["contextLinks"][0]["linkedAt"],
+            }
+        ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_commit_import_preview_continues_existing_head_thread() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="source", title="Source", createdAt=now, updatedAt=now))
+        db.upsert_thread(ThreadRecord(threadId="dest", title="Dest", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-source-1",
+                threadId="source",
+                idx=1,
+                userText="source prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-dest-6",
+                threadId="dest",
+                idx=6,
+                userText="dest head prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+        preview = asyncio.run(
+            manager.create_import_preview("source", ["turn-source-1"], "dest", dest_turn_id="turn-dest-6")
+        )
+
+        async def fake_start_turn(thread_id: str, text: str) -> TurnRecord:
+            turn = TurnRecord(
+                turnId="turn-dest-7",
+                threadId=thread_id,
+                idx=7,
+                userText=text,
+                status="running",
+                startedAt=utc_now(),
+            )
+            db.upsert_turn(turn)
+            return turn
+
+        async def unexpected_branch_from_turn(thread_id: str, turn_id: str, title: str | None = None) -> ThreadRecord:
+            raise AssertionError(f"branch_from_turn should not be called for head continuation: {thread_id} {turn_id} {title}")
+
+        manager.start_turn = fake_start_turn  # type: ignore[method-assign]
+        manager.branch_from_turn = unexpected_branch_from_turn  # type: ignore[method-assign]
+
+        result = asyncio.run(manager.commit_import_preview(preview.previewId, True, "copied context"))
+
+        assert result["thread"] is None
+        assert result["turn"]["threadId"] == "dest"
+        assert result["turn"]["turnId"] == "turn-dest-7"
+        assert db.get_turn("dest", "turn-dest-7") is not None
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_sync_thread_snapshot_preserves_existing_turn_context_links() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="thread-a", title="Thread A", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="thread-a",
+                idx=1,
+                userText="prompt",
+                status="completed",
+                startedAt=now,
+                metadata={"contextLinks": [{"sourceThreadId": "source", "sourceTurnId": "turn-source"}]},
+            )
+        )
+
+        manager._sync_thread_snapshot(
+            {
+                "id": "thread-a",
+                "createdAt": 0,
+                "updatedAt": 0,
+                "turns": [{"id": "turn-1", "status": "completed", "items": [{"type": "agentMessage", "text": "answer"}]}],
+            }
+        )
+
+        turn = db.get_turn("thread-a", "turn-1")
+        assert turn is not None
+        assert turn.metadata["contextLinks"] == [{"sourceThreadId": "source", "sourceTurnId": "turn-source"}]
+        assert turn.metadata["items"] == [{"type": "agentMessage", "text": "answer"}]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 class FakeRpc:
     def __init__(self) -> None:
         self.responses: list[tuple[object, object, object]] = []
 
     async def send_response(self, request_id, result=None, error=None) -> None:
         self.responses.append((request_id, result, error))
+
+    async def close(self) -> None:
+        return None
 
 
 def test_approval_response_preserves_numeric_jsonrpc_id() -> None:
@@ -179,6 +451,43 @@ def test_approval_response_preserves_numeric_jsonrpc_id() -> None:
 
         assert result.status == "approve"
         assert rpc.responses == [(0, {"decision": "accept"}, None)]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_ensure_capacity_retires_oldest_idle_session() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        oldest = CodexSession(process_key="oldest", rpc=FakeRpc(), thread_id="thread-oldest", last_used_monotonic=10.0)
+        newer = CodexSession(process_key="newer", rpc=FakeRpc(), thread_id="thread-newer", last_used_monotonic=20.0)
+        newest = CodexSession(process_key="newest", rpc=FakeRpc(), thread_id="thread-newest", last_used_monotonic=30.0)
+        busy = CodexSession(
+            process_key="busy",
+            rpc=FakeRpc(),
+            thread_id="thread-busy",
+            last_used_monotonic=1.0,
+            active_turn_id="turn-busy",
+        )
+        manager.sessions = {
+            oldest.thread_id: oldest,
+            newer.thread_id: newer,
+            newest.thread_id: newest,
+            busy.thread_id: busy,
+        }
+        retired: list[str] = []
+
+        async def fake_retire_session(session: CodexSession) -> None:
+            retired.append(session.process_key)
+
+        manager._retire_session = fake_retire_session  # type: ignore[method-assign]
+
+        asyncio.run(manager._ensure_capacity())
+
+        assert retired == ["oldest"]
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)

@@ -30,6 +30,7 @@ class Database:
     def _init_schema(self) -> None:
         with self._lock:
             self._migrate_turns_schema_if_needed()
+            self._migrate_import_previews_schema_if_needed()
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS threads(
@@ -81,6 +82,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS import_previews(
                     preview_id TEXT PRIMARY KEY,
                     dest_thread_id TEXT NOT NULL,
+                    dest_turn_id TEXT,
                     source_thread_id TEXT NOT NULL,
                     source_turn_ids_json TEXT NOT NULL,
                     suspected_secrets_json TEXT NOT NULL,
@@ -127,6 +129,14 @@ class Database:
             DROP TABLE turns_legacy;
             """
         )
+
+    def _migrate_import_previews_schema_if_needed(self) -> None:
+        rows = self._conn.execute("PRAGMA table_info(import_previews)").fetchall()
+        if not rows:
+            return
+        columns = {row["name"] for row in rows}
+        if "dest_turn_id" not in columns:
+            self._conn.execute("ALTER TABLE import_previews ADD COLUMN dest_turn_id TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -338,6 +348,23 @@ class Database:
             rows = self._conn.execute("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at ASC").fetchall()
         return [self._row_to_approval(row) for row in rows]
 
+    def list_approvals(self, thread_id: str | None = None, turn_id: str | None = None) -> list[ApprovalRecord]:
+        query = "SELECT * FROM approvals"
+        clauses: list[str] = []
+        args: list[Any] = []
+        if thread_id is not None:
+            clauses.append("thread_id = ?")
+            args.append(thread_id)
+        if turn_id is not None:
+            clauses.append("turn_id = ?")
+            args.append(turn_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at ASC, approval_id ASC"
+        with self._lock:
+            rows = self._conn.execute(query, args).fetchall()
+        return [self._row_to_approval(row) for row in rows]
+
     def update_approval_status(self, approval_id: str, status: str) -> ApprovalRecord | None:
         approval = self.get_approval(approval_id)
         if not approval:
@@ -351,12 +378,22 @@ class Database:
         with self._lock:
             self._conn.execute(
                 """
-                INSERT OR REPLACE INTO import_previews(preview_id, dest_thread_id, source_thread_id, source_turn_ids_json, suspected_secrets_json, transfer_blob, expires_at)
-                VALUES(?,?,?,?,?,?,?)
+                INSERT OR REPLACE INTO import_previews(
+                    preview_id,
+                    dest_thread_id,
+                    dest_turn_id,
+                    source_thread_id,
+                    source_turn_ids_json,
+                    suspected_secrets_json,
+                    transfer_blob,
+                    expires_at
+                )
+                VALUES(?,?,?,?,?,?,?,?)
                 """,
                 (
                     preview.previewId,
                     preview.destThreadId,
+                    preview.destTurnId,
                     preview.sourceThreadId,
                     json_dumps(preview.sourceTurnIds),
                     json_dumps(preview.suspectedSecrets),
@@ -374,6 +411,7 @@ class Database:
         return ImportPreviewRecord(
             previewId=row["preview_id"],
             destThreadId=row["dest_thread_id"],
+            destTurnId=row["dest_turn_id"],
             sourceThreadId=row["source_thread_id"],
             sourceTurnIds=_json_loads(row["source_turn_ids_json"], []),
             suspectedSecrets=_json_loads(row["suspected_secrets_json"], []),
@@ -389,6 +427,47 @@ class Database:
     def delete_expired_import_previews(self, now_iso: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM import_previews WHERE expires_at < ?", (now_iso,))
+            self._conn.commit()
+
+    def list_conversation_thread_ids(self, thread_id: str) -> list[str]:
+        threads = self.list_threads()
+        by_id = {thread.threadId: thread for thread in threads}
+        root_id = thread_id
+        while True:
+            current = by_id.get(root_id)
+            if not current or not current.parentThreadId:
+                break
+            root_id = current.parentThreadId
+        children_by_parent: dict[str, list[str]] = {}
+        for thread in threads:
+            if not thread.parentThreadId:
+                continue
+            children_by_parent.setdefault(thread.parentThreadId, []).append(thread.threadId)
+        ordered_ids: list[str] = []
+        stack = [root_id]
+        while stack:
+            current = stack.pop()
+            if current in ordered_ids:
+                continue
+            ordered_ids.append(current)
+            for child_id in reversed(children_by_parent.get(current, [])):
+                stack.append(child_id)
+        return ordered_ids
+
+    def delete_threads(self, thread_ids: list[str]) -> None:
+        if not thread_ids:
+            return
+        placeholders = ",".join("?" for _ in thread_ids)
+        params = tuple(thread_ids)
+        with self._lock:
+            self._conn.execute(
+                f"DELETE FROM import_previews WHERE dest_thread_id IN ({placeholders}) OR source_thread_id IN ({placeholders})",
+                params + params,
+            )
+            self._conn.execute(f"DELETE FROM approvals WHERE thread_id IN ({placeholders})", params)
+            self._conn.execute(f"DELETE FROM events WHERE thread_id IN ({placeholders})", params)
+            self._conn.execute(f"DELETE FROM turns WHERE thread_id IN ({placeholders})", params)
+            self._conn.execute(f"DELETE FROM threads WHERE thread_id IN ({placeholders})", params)
             self._conn.commit()
 
     def _row_to_thread(self, row: sqlite3.Row) -> ThreadRecord:

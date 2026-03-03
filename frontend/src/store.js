@@ -1,27 +1,111 @@
-function sortThreads(threads) {
-  return [...threads].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+import { getConversationRootId, getConversationRoots, getNodeId, getTurns, parseNodeId, pickDefaultNodeId, pickDefaultThreadId, sortTurns } from "./selectors.js";
+
+function ensureTurnBucket(state, threadId, turnId) {
+  const key = `${threadId}:${turnId ?? "none"}`;
+  if (!state.eventsByTurn[key]) {
+    state.eventsByTurn[key] = [];
+  }
+  return key;
 }
 
-function sortTurns(turns) {
-  return [...turns].sort((a, b) => a.idx - b.idx);
+function nodeExists(state, nodeId) {
+  const { threadId, turnId } = parseNodeId(nodeId);
+  if (!threadId || !state.threads[threadId]) {
+    return false;
+  }
+  if (!turnId) {
+    return true;
+  }
+  return Boolean(getTurns(state, threadId).find((turn) => turn.turnId === turnId));
+}
+
+function ensureSelection(state) {
+  const roots = getConversationRoots(state);
+  if (!roots.length) {
+    state.selectedConversationId = null;
+    state.selectedThreadId = null;
+    state.selectedNodeId = null;
+    state.expandedTurnKey = null;
+    state.openTurnMenuKey = null;
+    return;
+  }
+
+  if (!state.selectedConversationId || !state.threads[state.selectedConversationId] || state.threads[state.selectedConversationId].parentThreadId) {
+    state.selectedConversationId = roots[0].threadId;
+  }
+
+  const conversationId = state.selectedConversationId;
+  if (!state.selectedThreadId || getConversationRootId(state, state.selectedThreadId) !== conversationId) {
+    state.selectedThreadId = pickDefaultThreadId(state, conversationId);
+  }
+
+  if (!state.selectedNodeId || !nodeExists(state, state.selectedNodeId)) {
+    state.selectedNodeId = pickDefaultNodeId(state, state.selectedThreadId);
+  }
+
+  if (state.selectedNodeId) {
+    const { threadId } = parseNodeId(state.selectedNodeId);
+    if (threadId) {
+      state.selectedThreadId = threadId;
+    }
+  }
+
+  if (state.expandedTurnKey && !nodeExists(state, state.expandedTurnKey)) {
+    state.expandedTurnKey = null;
+  }
+  if (state.openTurnMenuKey && !nodeExists(state, state.openTurnMenuKey)) {
+    state.openTurnMenuKey = null;
+  }
+}
+
+function ensureModalState(state) {
+  const { sourceThreadId, targetThreadId, targetTurnId } = state.importModal;
+  if (sourceThreadId && !state.threads[sourceThreadId]) {
+    state.importModal = {
+      open: false,
+      preview: null,
+      sourceThreadId: null,
+      sourceTurnIds: [],
+      targetThreadId: null,
+      targetTurnId: null,
+      loading: false,
+      error: "",
+    };
+    return;
+  }
+  if (targetThreadId && !state.threads[targetThreadId]) {
+    state.importModal.targetThreadId = null;
+    state.importModal.targetTurnId = null;
+    state.importModal.preview = null;
+  }
+  if (targetThreadId && targetTurnId && !getTurns(state, targetThreadId).some((turn) => turn.turnId === targetTurnId)) {
+    state.importModal.targetTurnId = null;
+    state.importModal.preview = null;
+  }
 }
 
 export function createStore() {
   const listeners = new Set();
+  let eventEmitTimer = null;
   const state = {
     threads: {},
     turnsByThread: {},
     eventsByTurn: {},
     approvals: {},
+    selectedConversationId: null,
     selectedThreadId: null,
+    selectedNodeId: null,
+    expandedTurnKey: null,
+    openTurnMenuKey: null,
     lastEventId: 0,
     connectionStatus: "connecting",
-    importSelection: {},
     importModal: {
       open: false,
       preview: null,
       sourceThreadId: null,
-      targetThreadId: "",
+      sourceTurnIds: [],
+      targetThreadId: null,
+      targetTurnId: null,
       loading: false,
       error: "",
     },
@@ -34,12 +118,14 @@ export function createStore() {
     }
   }
 
-  function ensureTurnBucket(threadId, turnId) {
-    const key = `${threadId}:${turnId ?? "none"}`;
-    if (!state.eventsByTurn[key]) {
-      state.eventsByTurn[key] = [];
+  function scheduleEventEmit() {
+    if (eventEmitTimer) {
+      return;
     }
-    return key;
+    eventEmitTimer = window.setTimeout(() => {
+      eventEmitTimer = null;
+      emit();
+    }, 75);
   }
 
   return {
@@ -62,8 +148,34 @@ export function createStore() {
       state.errorMessage = "";
       emit();
     },
-    setSelectedThread(threadId) {
+    selectConversation(threadId) {
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = pickDefaultThreadId(state, state.selectedConversationId);
+      state.selectedNodeId = pickDefaultNodeId(state, state.selectedThreadId);
+      state.openTurnMenuKey = null;
+      ensureModalState(state);
+      emit();
+    },
+    selectNode(threadId, turnId = null) {
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
       state.selectedThreadId = threadId;
+      state.selectedNodeId = getNodeId(threadId, turnId);
+      state.openTurnMenuKey = null;
+      ensureModalState(state);
+      emit();
+    },
+    toggleTurnExpanded(threadId, turnId) {
+      const key = getNodeId(threadId, turnId);
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = threadId;
+      state.selectedNodeId = key;
+      state.expandedTurnKey = state.expandedTurnKey === key ? null : key;
+      state.openTurnMenuKey = null;
+      emit();
+    },
+    toggleTurnMenu(threadId, turnId) {
+      const key = getNodeId(threadId, turnId);
+      state.openTurnMenuKey = state.openTurnMenuKey === key ? null : key;
       emit();
     },
     applyBootstrap(payload) {
@@ -83,24 +195,21 @@ export function createStore() {
       for (const threadId of Object.keys(state.turnsByThread)) {
         state.turnsByThread[threadId] = sortTurns(state.turnsByThread[threadId]);
       }
-      for (const approval of payload.snapshot.pendingApprovals) {
+      for (const approval of payload.snapshot.approvals || payload.snapshot.pendingApprovals || []) {
         state.approvals[approval.approvalId] = approval;
       }
       for (const event of payload.events) {
         this.applyEvent(event, false);
       }
       state.lastEventId = payload.lastEventId ?? 0;
-      if (!state.selectedThreadId) {
-        const ordered = sortThreads(Object.values(state.threads));
-        state.selectedThreadId = ordered[0]?.threadId ?? null;
-      }
+      ensureSelection(state);
+      ensureModalState(state);
       emit();
     },
     applyThread(thread) {
       state.threads[thread.threadId] = thread;
-      if (!state.selectedThreadId) {
-        state.selectedThreadId = thread.threadId;
-      }
+      ensureSelection(state);
+      ensureModalState(state);
       emit();
     },
     applyTurn(turn) {
@@ -108,6 +217,36 @@ export function createStore() {
       const next = list.filter((item) => item.turnId !== turn.turnId);
       next.push(turn);
       state.turnsByThread[turn.threadId] = sortTurns(next);
+      ensureSelection(state);
+      ensureModalState(state);
+      emit();
+    },
+    applyTurns(turns) {
+      for (const turn of turns) {
+        const list = state.turnsByThread[turn.threadId] || [];
+        const next = list.filter((item) => item.turnId !== turn.turnId);
+        next.push(turn);
+        state.turnsByThread[turn.threadId] = sortTurns(next);
+      }
+      ensureSelection(state);
+      ensureModalState(state);
+      emit();
+    },
+    removeThread(threadId) {
+      delete state.threads[threadId];
+      delete state.turnsByThread[threadId];
+      for (const key of Object.keys(state.eventsByTurn)) {
+        if (key.startsWith(`${threadId}:`)) {
+          delete state.eventsByTurn[key];
+        }
+      }
+      for (const approvalId of Object.keys(state.approvals)) {
+        if (state.approvals[approvalId].threadId === threadId) {
+          delete state.approvals[approvalId];
+        }
+      }
+      ensureSelection(state);
+      ensureModalState(state);
       emit();
     },
     applyApproval(approval) {
@@ -115,29 +254,22 @@ export function createStore() {
       emit();
     },
     applyEvent(event, emitChange = true) {
-      const key = ensureTurnBucket(event.threadId, event.turnId);
+      const key = ensureTurnBucket(state, event.threadId, event.turnId);
       state.eventsByTurn[key].push(event);
       state.eventsByTurn[key].sort((a, b) => a.seq - b.seq);
       state.lastEventId = Math.max(state.lastEventId, event.eventId || 0);
       if (emitChange) {
-        emit();
+        scheduleEventEmit();
       }
     },
-    toggleImportTurn(threadId, turnId) {
-      const key = `${threadId}:${turnId}`;
-      state.importSelection[key] = !state.importSelection[key];
-      emit();
-    },
-    clearImportSelection() {
-      state.importSelection = {};
-      emit();
-    },
-    openImportModal(threadId) {
+    openImportModal({ sourceThreadId, sourceTurnIds = [], targetThreadId = null, targetTurnId = null }) {
       state.importModal = {
         open: true,
         preview: null,
-        sourceThreadId: threadId,
-        targetThreadId: "",
+        sourceThreadId,
+        sourceTurnIds,
+        targetThreadId,
+        targetTurnId,
         loading: false,
         error: "",
       };
@@ -148,7 +280,9 @@ export function createStore() {
         open: false,
         preview: null,
         sourceThreadId: null,
-        targetThreadId: "",
+        sourceTurnIds: [],
+        targetThreadId: null,
+        targetTurnId: null,
         loading: false,
         error: "",
       };
@@ -156,6 +290,7 @@ export function createStore() {
     },
     setImportModalState(patch) {
       state.importModal = { ...state.importModal, ...patch };
+      ensureModalState(state);
       emit();
     },
   };

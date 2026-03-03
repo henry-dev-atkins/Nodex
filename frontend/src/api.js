@@ -30,6 +30,16 @@ export async function apiPost(path, body) {
   return parseJson(response);
 }
 
+export async function apiDelete(path) {
+  const response = await fetch(path, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+    },
+  });
+  return parseJson(response);
+}
+
 export function getToken() {
   return TOKEN;
 }

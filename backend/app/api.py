@@ -6,7 +6,15 @@ from fastapi import APIRouter, Depends, Query
 
 from .codex_manager import CodexManager
 from .db import Database
-from .models import ApprovalDecisionRequest, CreateThreadRequest, ForkThreadRequest, ImportCommitRequest, ImportPreviewRequest, StartTurnRequest
+from .models import (
+    ApprovalDecisionRequest,
+    BranchThreadRequest,
+    CreateThreadRequest,
+    ForkThreadRequest,
+    ImportCommitRequest,
+    ImportPreviewRequest,
+    StartTurnRequest,
+)
 from .util import APP_NAME, APP_VERSION, utc_now
 
 
@@ -23,6 +31,7 @@ def build_api_router(db: Database, manager: CodexManager, require_token):
             "snapshot": {
                 "threads": [thread.model_dump() for thread in threads],
                 "turns": [turn.model_dump() for turn in turns],
+                "approvals": [approval.model_dump() for approval in db.list_approvals()],
                 "pendingApprovals": [approval.model_dump() for approval in db.list_pending_approvals()],
             },
             "events": [event.model_dump() for event in events],
@@ -62,7 +71,18 @@ def build_api_router(db: Database, manager: CodexManager, require_token):
     @router.post("/threads/{thread_id}/fork")
     async def post_fork(thread_id: str, payload: ForkThreadRequest) -> dict[str, Any]:
         thread = await manager.fork_thread(thread_id, title=payload.title)
-        return {"thread": thread.model_dump()}
+        turns = db.list_turns(thread.threadId)
+        return {"thread": thread.model_dump(), "turns": [turn.model_dump() for turn in turns]}
+
+    @router.post("/threads/{thread_id}/branch")
+    async def post_branch(thread_id: str, payload: BranchThreadRequest) -> dict[str, Any]:
+        thread = await manager.branch_from_turn(thread_id, payload.turnId, title=payload.title)
+        turns = db.list_turns(thread.threadId)
+        return {"thread": thread.model_dump(), "turns": [turn.model_dump() for turn in turns]}
+
+    @router.delete("/conversations/{thread_id}")
+    async def delete_conversation(thread_id: str) -> dict[str, Any]:
+        return await manager.delete_conversation(thread_id)
 
     @router.post("/approvals/{approval_id}")
     async def respond_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict[str, Any]:
@@ -71,7 +91,12 @@ def build_api_router(db: Database, manager: CodexManager, require_token):
 
     @router.post("/import/preview")
     async def import_preview(payload: ImportPreviewRequest) -> dict[str, Any]:
-        preview = await manager.create_import_preview(payload.sourceThreadId, payload.sourceTurnIds, payload.destThreadId)
+        preview = await manager.create_import_preview(
+            payload.sourceThreadId,
+            payload.sourceTurnIds,
+            payload.destThreadId,
+            dest_turn_id=payload.destTurnId,
+        )
         return preview.model_dump()
 
     @router.post("/import/commit")

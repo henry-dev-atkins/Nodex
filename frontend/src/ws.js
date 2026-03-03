@@ -20,6 +20,13 @@ export function connectEventStream(token, store) {
     }
     if (frame.type === "thread.created" || frame.type === "thread.forked" || frame.type === "thread.updated") {
       store.applyThread(frame.thread);
+      if (frame.turns) {
+        store.applyTurns(frame.turns);
+      }
+      return;
+    }
+    if (frame.type === "thread.deleted") {
+      store.removeThread(frame.threadId);
       return;
     }
     if (frame.type === "turn.updated") {

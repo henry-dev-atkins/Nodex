@@ -57,6 +57,7 @@ class ApprovalRecord(CamelModel):
 class ImportPreviewRecord(CamelModel):
     previewId: str
     destThreadId: str
+    destTurnId: str | None = None
     sourceThreadId: str
     sourceTurnIds: list[str]
     suspectedSecrets: list[dict[str, Any]]
@@ -77,6 +78,11 @@ class ForkThreadRequest(CamelModel):
     title: str | None = None
 
 
+class BranchThreadRequest(CamelModel):
+    turnId: str
+    title: str | None = None
+
+
 class ApprovalDecisionRequest(CamelModel):
     decision: Literal["approve", "deny"]
 
@@ -85,10 +91,10 @@ class ImportPreviewRequest(CamelModel):
     sourceThreadId: str
     sourceTurnIds: list[str]
     destThreadId: str
+    destTurnId: str | None = None
 
 
 class ImportCommitRequest(CamelModel):
     previewId: str
     confirmed: bool
     editedTransferBlob: str
-

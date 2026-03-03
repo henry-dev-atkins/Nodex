@@ -10,7 +10,7 @@ from typing import Any
 
 VERSION = "0.106.0"
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SOURCE = ROOT / ".codex_schema"
+SCHEMA_SOURCE = ROOT / "backend" / "tests" / "fixtures" / "schema"
 
 
 def main() -> int:

@@ -50,6 +50,7 @@ class CodexSession:
     pending_approvals: dict[str, ApprovalHandle] = field(default_factory=dict)
     last_used_monotonic: float = 0.0
     restart_attempted: bool = False
+    intentional_close: bool = False
 
 
 class CodexManager:
@@ -196,8 +197,64 @@ class CodexManager:
             forked_from_turn_id=parent_turn_id,
             title=title,
         )
-        await self.ws.emit_thread_forked(thread_record)
+        await self.ws.emit_thread_forked(thread_record, turns=self.db.list_turns(child_thread_id))
         return thread_record
+
+    async def branch_from_turn(self, thread_id: str, turn_id: str, title: str | None = None) -> ThreadRecord:
+        turn = self.db.get_turn(thread_id, turn_id)
+        if not turn:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "turn_not_found", "message": f"Unknown turn: {turn_id}", "details": {}}},
+            )
+        if turn.status == "running":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": "turn_in_progress", "message": "Cannot branch from an active turn", "details": {}}},
+            )
+        parent_session = await self.get_or_resume_session(thread_id)
+        source = await parent_session.rpc.request_with_retry(
+            "thread/read",
+            {"threadId": thread_id, "includeTurns": True},
+            timeout_s=60,
+        )
+        history = self._build_response_history(source["thread"], turn_id)
+        child_session = await self._spawn_session()
+        resumed = await child_session.rpc.request_with_retry(
+            "thread/resume",
+            self._thread_resume_params(thread_id, history=history),
+            timeout_s=60,
+        )
+        child_thread = resumed["thread"]
+        child_thread_id = child_thread["id"]
+        child_session.thread_id = child_thread_id
+        child_session.last_used_monotonic = asyncio.get_running_loop().time()
+        async with self._session_lock:
+            self.sessions[child_thread_id] = child_session
+        thread_record = self._sync_thread_snapshot(
+            child_thread,
+            parent_thread_id=thread_id,
+            forked_from_turn_id=turn_id,
+            title=title,
+        )
+        await self.ws.emit_thread_forked(thread_record, turns=self.db.list_turns(child_thread_id))
+        return thread_record
+
+    async def delete_conversation(self, thread_id: str) -> dict[str, Any]:
+        await self.get_thread(thread_id)
+        conversation_id = self._conversation_root_id(thread_id)
+        thread_ids = self.db.list_conversation_thread_ids(conversation_id)
+        if not thread_ids:
+            return {"conversationId": conversation_id, "deletedThreadIds": []}
+        async with self._session_lock:
+            sessions = [self.sessions.get(item) for item in thread_ids]
+        for session in sessions:
+            if session is not None:
+                await self._retire_session(session)
+        self.db.delete_threads(thread_ids)
+        for deleted_thread_id in thread_ids:
+            await self.ws.emit_thread_deleted(deleted_thread_id, conversation_id)
+        return {"conversationId": conversation_id, "deletedThreadIds": thread_ids}
 
     async def start_turn(self, thread_id: str, text: str) -> TurnRecord:
         session = await self.get_or_resume_session(thread_id)
@@ -264,13 +321,33 @@ class CodexManager:
         await self.ws.emit_approval_responded(approval)
         return approval
 
-    async def create_import_preview(self, source_thread_id: str, source_turn_ids: list[str], dest_thread_id: str) -> ImportPreviewRecord:
+    async def create_import_preview(
+        self,
+        source_thread_id: str,
+        source_turn_ids: list[str],
+        dest_thread_id: str,
+        dest_turn_id: str | None = None,
+    ) -> ImportPreviewRecord:
         await self.get_thread(source_thread_id)
         await self.get_thread(dest_thread_id)
+        if dest_turn_id:
+            dest_turn = self.db.get_turn(dest_thread_id, dest_turn_id)
+            if not dest_turn:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": {
+                            "code": "turn_not_found",
+                            "message": f"Unknown destination turn: {dest_turn_id}",
+                            "details": {},
+                        }
+                    },
+                )
         blob = self._build_transfer_blob(source_thread_id, source_turn_ids)
         preview = ImportPreviewRecord(
             previewId=f"imp_prev_{uuid.uuid4().hex}",
             destThreadId=dest_thread_id,
+            destTurnId=dest_turn_id,
             sourceThreadId=source_thread_id,
             sourceTurnIds=source_turn_ids,
             suspectedSecrets=self._detect_suspected_secrets(blob),
@@ -292,9 +369,26 @@ class CodexManager:
                 status_code=400,
                 detail={"error": {"code": "import_preview_required", "message": "Import must be explicitly confirmed", "details": {}}},
             )
-        turn = await self.start_turn(preview.destThreadId, edited_transfer_blob)
+        created_thread: ThreadRecord | None = None
+        destination_thread_id = preview.destThreadId
+        if preview.destTurnId:
+            head_turn_id = self.db.get_last_turn_id(preview.destThreadId)
+            if head_turn_id != preview.destTurnId:
+                created_thread = await self.branch_from_turn(preview.destThreadId, preview.destTurnId, title=None)
+                destination_thread_id = created_thread.threadId
+        turn = await self.start_turn(destination_thread_id, edited_transfer_blob)
+        turn = self._annotate_imported_turn(turn, preview)
+        await self.ws.emit_turn_updated(turn)
         self.db.delete_import_preview(preview_id)
-        return {"importedIntoTurnId": turn.turnId, "destThreadId": turn.threadId, "status": turn.status}
+        branch_turns = self.db.list_turns(created_thread.threadId) if created_thread else None
+        return {
+            "importedIntoTurnId": turn.turnId,
+            "destThreadId": turn.threadId,
+            "status": turn.status,
+            "turn": turn.model_dump(),
+            "thread": created_thread.model_dump() if created_thread else None,
+            "turns": [item.model_dump() for item in branch_turns] if branch_turns else None,
+        }
 
     async def housekeeping_loop(self) -> None:
         while not self._stopping:
@@ -322,6 +416,7 @@ class CodexManager:
             await self._retire_session(session)
 
     async def _retire_session(self, session: CodexSession) -> None:
+        session.intentional_close = True
         if session.thread_id:
             async with self._session_lock:
                 current = self.sessions.get(session.thread_id)
@@ -485,6 +580,8 @@ class CodexManager:
             current = self.sessions.get(session.thread_id)
             if current is session:
                 self.sessions.pop(session.thread_id, None)
+        if session.intentional_close:
+            return
         if not session.restart_attempted:
             session.restart_attempted = True
             try:
@@ -539,7 +636,7 @@ class CodexManager:
                     status=self._normalize_turn_status(turn.get("status"), fallback=existing.status if existing else "completed"),
                     startedAt=existing.startedAt if existing else thread_record.createdAt,
                     completedAt=existing.completedAt if existing else None,
-                    metadata={"items": items},
+                    metadata={**(existing.metadata if existing else {}), "items": items},
                 )
             )
         return thread_record
@@ -619,13 +716,16 @@ class CodexManager:
             "serviceName": APP_NAME,
         }
 
-    def _thread_resume_params(self, thread_id: str) -> dict[str, Any]:
-        return {
+    def _thread_resume_params(self, thread_id: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        payload = {
             "threadId": thread_id,
             "cwd": str(self.settings.workspace_dir),
             "approvalPolicy": self.settings.approval_policy,
             "persistExtendedHistory": True,
         }
+        if history is not None:
+            payload["history"] = history
+        return payload
 
     def _approval_result(self, method: str, decision: str) -> dict[str, Any]:
         approve = decision == "approve"
@@ -638,23 +738,76 @@ class CodexManager:
         return {"decision": "decline"}
 
     def _build_transfer_blob(self, source_thread_id: str, source_turn_ids: list[str]) -> str:
-        lines = [f"Imported context from thread {source_thread_id}", ""]
-        for turn_id in source_turn_ids:
-            turn = self.db.get_turn(source_thread_id, turn_id)
-            if not turn or turn.threadId != source_thread_id:
-                continue
-            lines.append(f"Turn {turn.turnId}")
-            lines.append(f"User: {turn.userText}")
-            final_message = self._extract_final_agent_text(source_thread_id, turn_id)
+        source_thread = self.db.get_thread(source_thread_id)
+        source_label = source_thread.title if source_thread and source_thread.title else source_thread_id
+        valid_turns = [
+            turn
+            for turn_id in source_turn_ids
+            for turn in [self.db.get_turn(source_thread_id, turn_id)]
+            if turn and turn.threadId == source_thread_id
+        ]
+        lines = [
+            "Copied branch context",
+            "",
+            f"Source branch: {source_label}",
+            f"Source thread ID: {source_thread_id}",
+            f"Selected turns: {len(valid_turns)}",
+            "",
+        ]
+        for turn in valid_turns:
+            final_message = self._extract_final_agent_text(source_thread_id, turn.turnId)
+            reasoning_summary = self._extract_reasoning_summary(source_thread_id, turn.turnId)
+            decision_summary = self._extract_decision_summary(source_thread_id, turn.turnId, turn.status)
             if final_message:
-                lines.append(f"Assistant: {final_message}")
-            command_summaries = self._extract_command_summaries(source_thread_id, turn_id)
+                result_text = final_message
+            else:
+                result_text = "No final assistant result captured yet."
+            summary_text = reasoning_summary or final_message or turn.userText
+            command_summaries = self._extract_command_summaries(source_thread_id, turn.turnId)
+            lines.append(f"Turn {turn.idx} ({turn.turnId})")
+            lines.append("Prompt:")
+            lines.append(turn.userText)
+            lines.append("")
+            lines.append("Summary:")
+            lines.append(summary_text)
+            lines.append("")
+            lines.append("Decision:")
+            lines.append(decision_summary)
+            lines.append("")
+            lines.append("Result:")
+            lines.append(result_text)
             if command_summaries:
+                lines.append("")
                 lines.append("Commands:")
                 lines.extend(f"- {summary}" for summary in command_summaries)
             lines.append("")
-        lines.append("This is copied context, not a true merge.")
+        lines.append("This is copied context, not a true merge. Use it as reference material in the destination branch.")
         return "\n".join(lines).strip()
+
+    def _annotate_imported_turn(self, turn: TurnRecord, preview: ImportPreviewRecord) -> TurnRecord:
+        existing_links = turn.metadata.get("contextLinks", [])
+        if not isinstance(existing_links, list):
+            existing_links = []
+        next_links = list(existing_links)
+        linked_at = utc_now()
+        for source_turn_id in preview.sourceTurnIds:
+            next_links.append(
+                {
+                    "kind": "contextImport",
+                    "sourceThreadId": preview.sourceThreadId,
+                    "sourceTurnId": source_turn_id,
+                    "previewId": preview.previewId,
+                    "linkedAt": linked_at,
+                }
+            )
+        updated = self.db.update_turn_status(
+            turn.threadId,
+            turn.turnId,
+            turn.status,
+            completed_at=turn.completedAt,
+            metadata={"contextLinks": next_links},
+        )
+        return updated or turn
 
     def _extract_final_agent_text(self, thread_id: str, turn_id: str) -> str:
         chunks: list[str] = []
@@ -668,6 +821,40 @@ class CodexManager:
                     return str(item["text"])
         return "".join(chunks).strip()
 
+    def _extract_reasoning_summary(self, thread_id: str, turn_id: str) -> str:
+        turn = self.db.get_turn(thread_id, turn_id)
+        items = turn.metadata.get("items", []) if turn else []
+        for item in items:
+            if item.get("type") != "reasoning":
+                continue
+            summary = item.get("summary")
+            if isinstance(summary, list):
+                text = "\n".join(str(part).strip() for part in summary if str(part).strip()).strip()
+                if text:
+                    return text
+            text = str(item.get("text", "")).strip()
+            if text:
+                return text
+        chunks: list[str] = []
+        for event in self.db.list_turn_events(thread_id, turn_id):
+            if event.type == "item/reasoning/summaryTextDelta":
+                chunks.append(str(event.payload.get("delta", "")))
+                continue
+            if event.type != "item/completed":
+                continue
+            item = event.payload.get("item", {})
+            if item.get("type") != "reasoning":
+                continue
+            summary = item.get("summary")
+            if isinstance(summary, list):
+                text = "\n".join(str(part).strip() for part in summary if str(part).strip()).strip()
+                if text:
+                    return text
+            text = str(item.get("text", "")).strip()
+            if text:
+                return text
+        return "".join(chunks).strip()
+
     def _extract_command_summaries(self, thread_id: str, turn_id: str) -> list[str]:
         summaries: list[str] = []
         for event in self.db.list_turn_events(thread_id, turn_id):
@@ -678,6 +865,24 @@ class CodexManager:
                 continue
             summaries.append(f"{item.get('command', '')} [{item.get('status', 'unknown')}] exit={item.get('exitCode')}")
         return summaries
+
+    def _extract_decision_summary(self, thread_id: str, turn_id: str, turn_status: str) -> str:
+        approvals = self.db.list_approvals(thread_id=thread_id, turn_id=turn_id)
+        decisions = [approval for approval in approvals if approval.status in {"approve", "deny"}]
+        if decisions:
+            latest = decisions[-1]
+            if latest.status == "approve":
+                return "Approval granted for the requested action."
+            return "Approval denied for the requested action."
+        if turn_status == "error":
+            return "The turn failed before it produced a stable result."
+        if turn_status == "running":
+            return "The turn is still running."
+        if turn_status == "interrupted":
+            return "The turn was interrupted before completion."
+        if turn_status == "completed":
+            return "Completed without an explicit approval decision."
+        return f"Turn status: {turn_status}"
 
     def _detect_suspected_secrets(self, text: str) -> list[dict[str, Any]]:
         findings: list[dict[str, Any]] = []
@@ -721,6 +926,120 @@ class CodexManager:
             if text:
                 return text
         return ""
+
+    def _conversation_root_id(self, thread_id: str) -> str:
+        current = self.db.get_thread(thread_id)
+        if not current:
+            return thread_id
+        while current.parentThreadId:
+            parent = self.db.get_thread(current.parentThreadId)
+            if not parent:
+                break
+            current = parent
+        return current.threadId
+
+    def _build_response_history(self, codex_thread: dict[str, Any], turn_id: str) -> list[dict[str, Any]]:
+        history: list[dict[str, Any]] = []
+        found = False
+        for turn in codex_thread.get("turns", []):
+            history.extend(self._response_items_from_thread_items(turn.get("items", [])))
+            if turn.get("id") == turn_id:
+                found = True
+                break
+        if not found:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "turn_not_found", "message": f"Unknown turn: {turn_id}", "details": {}}},
+            )
+        return history
+
+    def _response_items_from_thread_items(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        history: list[dict[str, Any]] = []
+        for item in items:
+            item_type = item.get("type")
+            if item_type == "userMessage":
+                history.append(
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [self._content_item_from_user_input(part) for part in item.get("content", [])],
+                    }
+                )
+                continue
+            if item_type == "agentMessage":
+                history.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": item.get("text", "")}],
+                        "phase": item.get("phase"),
+                    }
+                )
+                continue
+            if item_type == "plan":
+                history.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": item.get("text", "")}],
+                        "phase": "commentary",
+                    }
+                )
+                continue
+            if item_type == "reasoning":
+                history.append(
+                    {
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": text} for text in item.get("summary", [])],
+                        "content": [{"type": "reasoning_text", "text": text} for text in item.get("content", [])],
+                        "encrypted_content": None,
+                    }
+                )
+                continue
+            if item_type == "commandExecution":
+                history.append(
+                    {
+                        "type": "local_shell_call",
+                        "call_id": item.get("id"),
+                        "status": self._local_shell_status(item.get("status")),
+                        "action": {
+                            "type": "exec",
+                            "command": split_command(str(item.get("command", ""))),
+                            "timeout_ms": None,
+                            "working_directory": item.get("cwd"),
+                            "env": None,
+                            "user": None,
+                        },
+                    }
+                )
+                continue
+            if item_type == "webSearch":
+                history.append(
+                    {
+                        "type": "web_search_call",
+                        "status": "completed",
+                        "action": item.get("action") or {"type": "search", "query": item.get("query")},
+                    }
+                )
+                continue
+            history.append({"type": "other"})
+        return history
+
+    def _content_item_from_user_input(self, part: dict[str, Any]) -> dict[str, Any]:
+        part_type = part.get("type")
+        if part_type == "text":
+            return {"type": "input_text", "text": part.get("text", "")}
+        if part_type in {"image", "localImage"}:
+            return {"type": "input_image", "image_url": part.get("url") or part.get("path") or ""}
+        name = part.get("name") or part.get("path") or part.get("type") or "input"
+        return {"type": "input_text", "text": str(name)}
+
+    def _local_shell_status(self, status: Any) -> str:
+        if status in {"completed", "success"}:
+            return "completed"
+        if status in {"inProgress", "running"}:
+            return "in_progress"
+        return "incomplete"
 
     def _extract_thread_id(self, payload: dict[str, Any]) -> str | None:
         if "threadId" in payload:

@@ -80,11 +80,17 @@ class WebSocketHub:
     async def emit_thread_created(self, thread: ThreadRecord) -> None:
         await self.broadcast_json({"type": "thread.created", "thread": _as_dict(thread)})
 
-    async def emit_thread_forked(self, thread: ThreadRecord) -> None:
-        await self.broadcast_json({"type": "thread.forked", "thread": _as_dict(thread)})
+    async def emit_thread_forked(self, thread: ThreadRecord, turns: list[TurnRecord] | None = None) -> None:
+        payload: dict[str, Any] = {"type": "thread.forked", "thread": _as_dict(thread)}
+        if turns is not None:
+            payload["turns"] = _as_dict(turns)
+        await self.broadcast_json(payload)
 
     async def emit_thread_updated(self, thread: ThreadRecord) -> None:
         await self.broadcast_json({"type": "thread.updated", "thread": _as_dict(thread)})
+
+    async def emit_thread_deleted(self, thread_id: str, conversation_id: str) -> None:
+        await self.broadcast_json({"type": "thread.deleted", "threadId": thread_id, "conversationId": conversation_id})
 
     async def emit_turn_updated(self, turn: TurnRecord) -> None:
         await self.broadcast_json({"type": "turn.updated", "turn": _as_dict(turn)})
@@ -101,4 +107,3 @@ class WebSocketHub:
                 await websocket.receive_text()
         except Exception:
             await self.disconnect(websocket)
-

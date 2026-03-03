@@ -15,61 +15,35 @@
   <body>
     <div id="app">
       <aside class="sidebar">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Local Only</p>
-            <h1>Codex UI Wrapper</h1>
-          </div>
-          <button id="new-thread-button" class="primary-button">New Thread</button>
+        <div class="sidebar-header">
+          <h1>Conversations</h1>
+          <button id="new-thread-button" class="primary-button">New</button>
         </div>
         <div id="thread-list" class="thread-list"></div>
       </aside>
+      <div id="sidebar-resizer" class="pane-resizer pane-resizer-vertical" aria-hidden="true"></div>
 
       <main class="main-shell">
         <header class="topbar">
-          <div>
-            <p class="eyebrow">Session Graph</p>
-            <h2 id="thread-title">No thread selected</h2>
+          <div class="topbar-mainline">
+            <h2 id="thread-title">No conversation</h2>
+            <span id="thread-turn-label" class="topbar-turn">Start</span>
           </div>
-          <div class="topbar-actions">
-            <span id="connection-status" class="status-chip">Connecting</span>
-            <button id="fork-thread-button" class="ghost-button" disabled>Fork Head</button>
-            <button id="begin-import-button" class="ghost-button" disabled>Import Selected Turns</button>
-          </div>
+          <span id="connection-status" class="status-dot is-idle" title="Connecting" aria-label="Connecting"></span>
         </header>
+        <div id="error-banner"></div>
 
-        <section class="graph-panel panel">
-          <div class="panel-title-row">
-            <h3>Branch Map</h3>
-          </div>
-          <div id="error-banner"></div>
+        <section class="graph-panel">
           <div id="graph-view" class="graph-view"></div>
         </section>
+        <div id="graph-transcript-resizer" class="pane-resizer pane-resizer-horizontal" aria-hidden="true"></div>
 
-        <section class="transcript-panel panel">
-          <div class="panel-title-row">
-            <h3>Conversation</h3>
-            <p class="subdued">Readable messages, tools, and approvals.</p>
-          </div>
+        <section class="transcript-panel">
           <div id="transcript-view" class="transcript-view"></div>
-        </section>
-
-        <section class="composer-panel panel">
-          <div class="panel-title-row">
-            <h3>Composer</h3>
-          </div>
-          <form id="composer-form" class="composer-form">
-            <textarea id="composer-input" rows="4" placeholder="Send a prompt to the selected thread..."></textarea>
-            <div class="composer-actions">
-              <span class="subdued">Approvals are always explicit.</span>
-              <button id="composer-submit" class="primary-button" type="submit" disabled>Send Turn</button>
-            </div>
-          </form>
         </section>
       </main>
     </div>
 
-    <div id="approval-modal-root"></div>
     <div id="import-modal-root"></div>
 
     <script type="module" src="/static/main.js"></script>
