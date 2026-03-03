@@ -40,7 +40,7 @@ export function renderComparePanel(container, state, handlers) {
     <section class="compare-panel">
       <div class="compare-panel-header">
         <div>
-          <h2>Compare</h2>
+          <h2>Compare Turns</h2>
           <span>${waitingForRight ? "Select another turn to finish the pair." : "Prompt and response summaries side by side."}</span>
         </div>
         <div class="compare-panel-actions">

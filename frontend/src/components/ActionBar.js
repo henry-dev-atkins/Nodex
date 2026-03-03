@@ -17,17 +17,21 @@ export function renderActionBar(container, state, handlers) {
     : forcedBranchActive
       ? `Next send branches from ${branchLabel} ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}.`
       : selectedNode?.turn
-        ? `${branchLabel} ${selectedNode.turn.idx === headTurn?.idx ? `T${selectedNode.turn.idx} is current.` : `T${selectedNode.turn.idx} is earlier.`}`
+      ? `${branchLabel} ${selectedNode.turn.idx === headTurn?.idx ? `T${selectedNode.turn.idx} is current.` : `T${selectedNode.turn.idx} is earlier.`}`
         : "Select a turn to branch, merge, or compare it.";
+  const title = selectedThread
+    ? `${branchLabel} / ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}`
+    : "No active branch";
 
   container.innerHTML = `
     <section class="action-bar">
       <div class="action-bar-copy">
         <span class="action-bar-label">Actions</span>
+        <div class="action-bar-title">${escapeHtml(title)}</div>
         <span>${escapeHtml(subtitle)}</span>
       </div>
       <div class="action-bar-buttons">
-        <button type="button" class="ghost-button" data-action="continue" ${selectedThread ? "" : "disabled"}>Continue</button>
+        <button type="button" class="primary-button" data-action="continue" ${selectedThread ? "" : "disabled"}>Continue</button>
         <button type="button" class="ghost-button ${forcedBranchActive ? "is-active" : ""}" data-action="branch" ${canBranch ? "" : "disabled"}>Branch</button>
         <button type="button" class="ghost-button ${pendingMergeActive ? "is-active" : ""}" data-action="merge" ${canMerge ? "" : "disabled"}>${pendingMergeActive ? "Cancel Merge" : "Merge Into..."}</button>
         <button type="button" class="ghost-button ${state.compare.open ? "is-active" : ""}" data-action="compare" ${canCompare ? "" : "disabled"}>${state.compare.open && state.compare.leftNodeId && !state.compare.rightNodeId ? "Set Compare" : "Compare"}</button>
