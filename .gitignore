@@ -1,0 +1,9 @@
+.codex_ui_data/
+.tmp/
+.tmp_test_artifacts/
+backend/pytest-cache-files-*/
+*.db
+*.db-shm
+*.db-wal
+.codex_ui_server.out.log
+.codex_ui_server.err.log

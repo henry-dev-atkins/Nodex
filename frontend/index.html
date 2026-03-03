@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex UI Wrapper</title>
+    <meta name="codex-ui-token" content="__SESSION_TOKEN__" />
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script>
+      window.__CODEX_UI_TOKEN__ = "__SESSION_TOKEN__";
+      window.__CODEX_UI_VERSION__ = "__APP_VERSION__";
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Local Only</p>
+            <h1>Codex UI Wrapper</h1>
+          </div>
+          <button id="new-thread-button" class="primary-button">New Thread</button>
+        </div>
+        <div id="thread-list" class="thread-list"></div>
+      </aside>
+
+      <main class="main-shell">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Session Graph</p>
+            <h2 id="thread-title">No thread selected</h2>
+          </div>
+          <div class="topbar-actions">
+            <span id="connection-status" class="status-chip">Connecting</span>
+            <button id="fork-thread-button" class="ghost-button" disabled>Fork Head</button>
+            <button id="begin-import-button" class="ghost-button" disabled>Import Selected Turns</button>
+          </div>
+        </header>
+
+        <section class="graph-panel panel">
+          <div class="panel-title-row">
+            <h3>Branch Map</h3>
+          </div>
+          <div id="error-banner"></div>
+          <div id="graph-view" class="graph-view"></div>
+        </section>
+
+        <section class="transcript-panel panel">
+          <div class="panel-title-row">
+            <h3>Conversation</h3>
+            <p class="subdued">Readable messages, tools, and approvals.</p>
+          </div>
+          <div id="transcript-view" class="transcript-view"></div>
+        </section>
+
+        <section class="composer-panel panel">
+          <div class="panel-title-row">
+            <h3>Composer</h3>
+          </div>
+          <form id="composer-form" class="composer-form">
+            <textarea id="composer-input" rows="4" placeholder="Send a prompt to the selected thread..."></textarea>
+            <div class="composer-actions">
+              <span class="subdued">Approvals are always explicit.</span>
+              <button id="composer-submit" class="primary-button" type="submit" disabled>Send Turn</button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <div id="approval-modal-root"></div>
+    <div id="import-modal-root"></div>
+
+    <script type="module" src="/static/main.js"></script>
+  </body>
+</html>
