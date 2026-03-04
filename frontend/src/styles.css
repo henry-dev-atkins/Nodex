@@ -1,6 +1,5 @@
 :root {
   --sidebar-width: 232px;
-  --map-graph-width: 560px;
   --focus-stage-max-width: 960px;
   --map-stage-max-width: 1180px;
   --bg: #ecebe7;
@@ -798,6 +797,10 @@ body.is-resizing * {
   cursor: ew-resize;
 }
 
+.graph-viewport.is-node-dragging .graph-canvas {
+  cursor: grabbing;
+}
+
 .graph-svg {
   display: block;
 }
@@ -884,6 +887,10 @@ body.is-resizing * {
 
 .graph-node {
   cursor: pointer;
+}
+
+.graph-node.is-dragging {
+  cursor: grabbing;
 }
 
 .graph-node-box {
@@ -1320,10 +1327,11 @@ body.is-resizing * {
 }
 
 .composer-actions .primary-button,
-.composer-actions .danger-button {
-  min-height: 28px;
-  padding: 3px 8px;
-  font-size: 0.76rem;
+.composer-actions .danger-button,
+.composer-actions .ghost-button {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 0.82rem;
 }
 
 .composer-stop-row {

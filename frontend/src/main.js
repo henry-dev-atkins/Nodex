@@ -369,6 +369,9 @@ function renderViews(state) {
     onLaneOrderChange() {
       render();
     },
+    onNodePositionChange() {
+      render();
+    },
   });
   renderTranscriptInto(elements.focusTranscript, state);
   renderImportPreviewModal(elements.importModal, state, {

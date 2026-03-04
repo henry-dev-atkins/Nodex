@@ -16,7 +16,9 @@ import {
 } from "../selectors.js";
 
 const LANE_ORDER_STORAGE_KEY = "codex-ui-graph-lane-order-v1";
+const NODE_POSITION_STORAGE_KEY = "codex-ui-graph-node-positions-v1";
 const laneOrderByConversation = new Map();
+const nodePositionsByConversation = new Map();
 const NODE_WIDTH = 196;
 const NODE_HEIGHT = 56;
 const MERGE_NODE_WIDTH = 92;
@@ -48,6 +50,67 @@ function persistLaneOrders() {
   }
   const payload = Object.fromEntries(laneOrderByConversation.entries());
   window.localStorage.setItem(LANE_ORDER_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function loadNodePositions() {
+  if (nodePositionsByConversation.size || typeof window === "undefined") {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(NODE_POSITION_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    for (const [conversationId, positions] of Object.entries(parsed)) {
+      if (!positions || typeof positions !== "object") {
+        continue;
+      }
+      const normalized = {};
+      for (const [nodeId, point] of Object.entries(positions)) {
+        if (!point || typeof point !== "object") {
+          continue;
+        }
+        const x = Number(point.x);
+        const y = Number(point.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          continue;
+        }
+        normalized[String(nodeId)] = { x, y };
+      }
+      nodePositionsByConversation.set(conversationId, normalized);
+    }
+  } catch {
+    return;
+  }
+}
+
+function persistNodePositions() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const payload = Object.fromEntries(nodePositionsByConversation.entries());
+  window.localStorage.setItem(NODE_POSITION_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function getNodePositions(conversationId, nodeIds) {
+  loadNodePositions();
+  const existing = nodePositionsByConversation.get(conversationId) || {};
+  const knownIds = new Set(nodeIds);
+  const next = {};
+  for (const [nodeId, point] of Object.entries(existing)) {
+    if (!knownIds.has(nodeId) || !point) {
+      continue;
+    }
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    next[nodeId] = { x, y };
+  }
+  nodePositionsByConversation.set(conversationId, next);
+  return next;
 }
 
 function getLaneOrder(conversationId, threadIds) {
@@ -82,7 +145,7 @@ function buildLaneMap(threadOrder) {
   threadOrder.forEach((threadId, index) => {
     laneByThread[threadId] = index;
   });
-  return { laneByThread, laneCount: Math.max(threadOrder.length, 1) };
+  return { laneByThread };
 }
 
 function buildDepthMap(state, threads, childrenMap, rootId) {
@@ -184,7 +247,7 @@ export function renderGraphView(container, state, handlers) {
     conversation.threadId,
     threads.map((thread) => thread.threadId),
   );
-  const { laneByThread, laneCount } = buildLaneMap(laneOrder);
+  const { laneByThread } = buildLaneMap(laneOrder);
   const baseDepth = buildDepthMap(state, threads, childrenMap, conversation.threadId);
   const selectedNode = getSelectedNode(state);
   const activeContext = getActiveContextGraph(state);
@@ -272,6 +335,31 @@ export function renderGraphView(container, state, handlers) {
     }
   }
 
+  const paddingX = 52;
+  const paddingY = 40;
+  const baseBounds = getGraphBounds(nodes);
+  const baseOffsetX = paddingX - baseBounds.minX;
+  const baseOffsetY = paddingY - baseBounds.minY;
+  nodes.forEach((node) => {
+    node.x += baseOffsetX;
+    node.y += baseOffsetY;
+  });
+  laneLabelRows.forEach((row) => {
+    row.x += baseOffsetX;
+  });
+  let nodePositions = getNodePositions(
+    conversation.threadId,
+    nodes.map((node) => node.id),
+  );
+  nodes.forEach((node) => {
+    const saved = nodePositions[node.id];
+    if (!saved) {
+      return;
+    }
+    node.x = saved.x;
+    node.y = saved.y;
+  });
+
   for (const thread of threads) {
     for (const turn of getTurns(state, thread.threadId)) {
       const destinationNode = nodeMap[getNodeId(thread.threadId, turn.turnId)];
@@ -313,25 +401,27 @@ export function renderGraphView(container, state, handlers) {
     }
   }
 
-  const graphBounds = getGraphBounds([...nodes, ...mergeNodes]);
-  const paddingX = 52;
-  const paddingY = 40;
-  const offsetX = paddingX - graphBounds.minX;
-  const offsetY = paddingY - graphBounds.minY;
-  nodes.forEach((node) => {
-    node.x += offsetX;
-    node.y += offsetY;
-  });
-  laneLabelRows.forEach((row) => {
-    row.x += offsetX;
-  });
-  mergeNodes.forEach((node) => {
-    node.x += offsetX;
-    node.y += offsetY;
-  });
-  const laneOriginX = leftPadding + offsetX;
-  const width = Math.max(720, Math.ceil(graphBounds.maxX - graphBounds.minX + paddingX * 2));
-  const height = Math.max(520, Math.ceil(graphBounds.maxY - graphBounds.minY + paddingY * 2));
+  let graphBounds = getGraphBounds([...nodes, ...mergeNodes]);
+  const graphShiftX = graphBounds.minX < paddingX ? paddingX - graphBounds.minX : 0;
+  const graphShiftY = graphBounds.minY < paddingY ? paddingY - graphBounds.minY : 0;
+  if (graphShiftX || graphShiftY) {
+    nodes.forEach((node) => {
+      node.x += graphShiftX;
+      node.y += graphShiftY;
+    });
+    laneLabelRows.forEach((row) => {
+      row.x += graphShiftX;
+    });
+    mergeNodes.forEach((node) => {
+      node.x += graphShiftX;
+      node.y += graphShiftY;
+    });
+    graphBounds = getGraphBounds([...nodes, ...mergeNodes]);
+  }
+
+  const laneOriginX = leftPadding + baseOffsetX + graphShiftX;
+  const width = Math.max(720, Math.ceil(graphBounds.maxX + paddingX));
+  const height = Math.max(520, Math.ceil(graphBounds.maxY + paddingY));
 
   container.innerHTML = `
     <div class="graph-toolbar">
@@ -433,6 +523,10 @@ export function renderGraphView(container, state, handlers) {
 
   container.querySelectorAll("[data-node-id]").forEach((element) => {
     element.addEventListener("click", (event) => {
+      if (suppressNodeClick) {
+        suppressNodeClick = false;
+        return;
+      }
       if (event.target.closest("[data-link-handle]")) {
         return;
       }
@@ -451,11 +545,38 @@ export function renderGraphView(container, state, handlers) {
         y: event.clientY,
       });
     });
+    element.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest("[data-link-handle]") || linkState || laneDragState) {
+        return;
+      }
+      const node = nodeMap[element.dataset.nodeId];
+      if (!node || !canvasElement) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      nodeDragState = {
+        pointerId: event.pointerId,
+        nodeId: node.id,
+        element,
+        startPoint: getCanvasPoint(event, canvasElement),
+        startX: node.x,
+        startY: node.y,
+        deltaX: 0,
+        deltaY: 0,
+        moved: false,
+      };
+      element.classList.add("is-dragging");
+      viewportElement?.classList.add("is-node-dragging");
+      viewportElement?.setPointerCapture(event.pointerId);
+    });
   });
 
   let linkState = null;
   let laneDragState = null;
+  let nodeDragState = null;
   let hoveredTargetElement = null;
+  let suppressNodeClick = false;
 
   function clearHoveredTarget() {
     if (hoveredTargetElement) {
@@ -503,6 +624,42 @@ export function renderGraphView(container, state, handlers) {
     laneDragState = null;
   }
 
+  function stopNodeDrag(event, commit = true) {
+    if (!nodeDragState || (event && event.pointerId !== nodeDragState.pointerId)) {
+      return;
+    }
+    if (viewportElement?.hasPointerCapture?.(nodeDragState.pointerId)) {
+      viewportElement.releasePointerCapture(nodeDragState.pointerId);
+    }
+    viewportElement?.classList.remove("is-node-dragging");
+    nodeDragState.element.classList.remove("is-dragging");
+    nodeDragState.element.removeAttribute("transform");
+
+    if (commit && nodeDragState.moved) {
+      const node = nodeMap[nodeDragState.nodeId];
+      if (node) {
+        const nextX = nodeDragState.startX + nodeDragState.deltaX;
+        const nextY = nodeDragState.startY + nodeDragState.deltaY;
+        node.x = nextX;
+        node.y = nextY;
+        nodePositions = {
+          ...nodePositions,
+          [node.id]: { x: nextX, y: nextY },
+        };
+        nodePositionsByConversation.set(conversation.threadId, nodePositions);
+        persistNodePositions();
+        suppressNodeClick = true;
+        handlers.onNodePositionChange?.({
+          conversationId: conversation.threadId,
+          nodeId: node.id,
+          x: nextX,
+          y: nextY,
+        });
+      }
+    }
+    nodeDragState = null;
+  }
+
   container.querySelectorAll("[data-lane-thread-id]").forEach((laneHeader) => {
     laneHeader.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || linkState) {
@@ -542,6 +699,18 @@ export function renderGraphView(container, state, handlers) {
   });
 
   viewportElement?.addEventListener("pointermove", (event) => {
+    if (nodeDragState && event.pointerId === nodeDragState.pointerId && canvasElement) {
+      const worldPoint = getCanvasPoint(event, canvasElement);
+      const deltaX = worldPoint.x - nodeDragState.startPoint.x;
+      const deltaY = worldPoint.y - nodeDragState.startPoint.y;
+      nodeDragState.deltaX = deltaX;
+      nodeDragState.deltaY = deltaY;
+      if (!nodeDragState.moved && Math.abs(deltaX) + Math.abs(deltaY) > 2) {
+        nodeDragState.moved = true;
+      }
+      nodeDragState.element.setAttribute("transform", `translate(${deltaX} ${deltaY})`);
+      return;
+    }
     if (laneDragState && event.pointerId === laneDragState.pointerId) {
       return;
     }
@@ -567,6 +736,10 @@ export function renderGraphView(container, state, handlers) {
   });
 
   viewportElement?.addEventListener("pointerup", (event) => {
+    if (nodeDragState && event.pointerId === nodeDragState.pointerId) {
+      stopNodeDrag(event, true);
+      return;
+    }
     if (laneDragState && event.pointerId === laneDragState.pointerId) {
       stopLaneDrag(event, true);
       return;
@@ -588,6 +761,7 @@ export function renderGraphView(container, state, handlers) {
   });
 
   viewportElement?.addEventListener("pointercancel", (event) => {
+    stopNodeDrag(event, false);
     stopLaneDrag(event, false);
     stopLink(event);
   });
