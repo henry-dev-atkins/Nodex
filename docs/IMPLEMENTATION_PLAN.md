@@ -26,6 +26,34 @@ Source spec: [UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrappe
 - Long responses are intended to scroll inside bounded detail containers rather than expanding the entire transcript panel.
 - The main remaining purpose of this document is traceability from implementation back to design intent.
 
+## Current Handover State
+
+- Stable baseline branch: `master` at `f1e65a5`
+- First large UI checkpoint: `ui-trial-shell-rewrite` at `8c39eea`
+- Second large UI checkpoint: `ui-trial-studio-theme` at `ac38a3a`
+- Active branch during this handover: `ui-trial-studio-theme`
+- Current worktree: additional uncommitted UI experiment on top of `ac38a3a`
+
+Current experiment summary:
+
+- The shell has been shuffled again instead of merely recolored.
+- Structural move:
+  - left command dock for actions and compare
+  - top context ribbon spanning the active workspace
+  - transcript/map surfaces below the ribbon
+- Files currently carrying that experiment:
+  - `frontend/src/components/AppShell.js`
+  - `frontend/src/components/ActionBar.js`
+  - `frontend/src/styles.css`
+
+Verification state:
+
+- Latest backend regression run: `python -m pytest backend/tests -q`
+- Result: `11 passed, 1 warning`
+- Browser/manual verification: not run from this environment
+
+For the full handover narrative, see [CONTEXT_DUMP.md](/C:/Users/Henry/PersonalProjects/codex-wrapper/CONTEXT_DUMP.md).
+
 ## Phase 1: Visual System Compression
 
 Status: `implemented`
@@ -177,3 +205,11 @@ Acceptance criteria:
 - Transcript and approvals are dense and low-noise.
 - Runtime process management is bounded and tested.
 - README, spec, and plan stay aligned.
+
+## Practical Next Step
+
+The immediate decision is no longer technical implementation but product selection:
+
+1. Choose one of the experiment branches as the new base.
+2. Either commit the current dock/ribbon trial or discard it after browser review.
+3. Only then continue with another trial, otherwise the experiment track will become hard to compare cleanly.
