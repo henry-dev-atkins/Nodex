@@ -26,7 +26,7 @@ export function renderActionBar(container, state, handlers) {
   container.innerHTML = `
     <section class="action-bar">
       <div class="action-bar-copy">
-        <span class="action-bar-label">Flight Deck</span>
+        <span class="action-bar-label">Control Deck</span>
         <div class="action-bar-title">${escapeHtml(title)}</div>
         <span>${escapeHtml(subtitle)}</span>
       </div>

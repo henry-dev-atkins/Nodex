@@ -13,24 +13,6 @@ Current shipped refinements on top of this spec:
 - Branch transcripts include inherited parent-lineage rows.
 - Branch lanes can be manually reordered in the DAG and that order persists locally.
 
-Current experimentation status on top of those shipped refinements:
-
-- The redesign effort has moved from one target UI to a sequence of large shell/layout trials.
-- The active branch for those trials is `ui-trial-studio-theme`.
-- Two checkpoint branches exist:
-  - `ui-trial-shell-rewrite` at `8c39eea`
-  - `ui-trial-studio-theme` at `ac38a3a`
-- The current uncommitted trial on `ui-trial-studio-theme` is a structural shuffle:
-  - left command dock
-  - shared context ribbon above the main workspace
-  - transcript/map surfaces below that shared ribbon
-- That current trial is documented in [CONTEXT_DUMP.md](/C:/Users/Henry/PersonalProjects/codex-wrapper/CONTEXT_DUMP.md)
-
-Interpretation note:
-
-- The spec below remains the design intent record.
-- The repo is now using branch-based UI trials to explore alternatives around that intent rather than treating this text as a pixel-perfect live description.
-
 ## 1. Global Visual System Changes
 
 ### 1.1 Border Radius

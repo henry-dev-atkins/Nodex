@@ -13,8 +13,8 @@ export function renderAppShell(container) {
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-brand">
-          <span class="sidebar-eyebrow">Branchboard</span>
-          <h1>Atlas</h1>
+          <span class="sidebar-eyebrow">Codex UI</span>
+          <h1>Studio</h1>
         </div>
         <button id="new-thread-button" class="primary-button">New</button>
       </div>
@@ -22,7 +22,7 @@ export function renderAppShell(container) {
         <div class="sidebar-section-label">Conversations</div>
         <div id="thread-list" class="thread-list"></div>
       </div>
-      <div class="sidebar-footer">Sketch paths, split ideas, and stitch them back together.</div>
+      <div class="sidebar-footer">Branch maps, transcript work, and merge trials.</div>
     </aside>
     <div id="sidebar-resizer" class="pane-resizer pane-resizer-vertical" aria-hidden="true"></div>
 
@@ -30,7 +30,7 @@ export function renderAppShell(container) {
       <header class="topbar">
         <div class="topbar-mainline">
           <div class="topbar-copy">
-            <span class="topbar-kicker">Current Route</span>
+            <span class="topbar-kicker">Active line</span>
             <h2 id="thread-title">No conversation</h2>
           </div>
           <span id="thread-turn-label" class="topbar-turn">Start</span>
@@ -44,19 +44,12 @@ export function renderAppShell(container) {
         </div>
       </header>
       <div id="error-banner"></div>
-      <section class="workspace-deck">
-        <aside class="command-column">
-          <div class="command-slot command-slot-actions">
-            <div id="action-bar-root"></div>
-          </div>
-          <div class="command-slot command-slot-compare">
-            <div id="compare-panel-root"></div>
-          </div>
-        </aside>
+      <section class="workspace-toolbar">
+        <div id="action-bar-root"></div>
+      </section>
 
-        <section class="content-stage">
-          <div id="context-panel" class="context-ribbon"></div>
-
+      <section class="workspace-grid">
+        <section class="primary-stage">
           <section id="focus-layout" class="focus-layout">
             <section class="transcript-panel transcript-panel-focus">
               <div id="focus-transcript-view" class="transcript-view"></div>
@@ -73,6 +66,11 @@ export function renderAppShell(container) {
             </section>
           </section>
         </section>
+
+        <aside class="inspector-rail">
+          <div id="context-panel" class="inspector-slot"></div>
+          <div id="compare-panel-root" class="inspector-slot"></div>
+        </aside>
       </section>
     </main>
   `;
