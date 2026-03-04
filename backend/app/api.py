@@ -13,6 +13,7 @@ from .models import (
     ForkThreadRequest,
     ImportCommitRequest,
     ImportPreviewRequest,
+    RenameThreadRequest,
     StartTurnRequest,
 )
 from .util import APP_NAME, APP_VERSION, utc_now
@@ -79,6 +80,15 @@ def build_api_router(db: Database, manager: CodexManager, require_token):
         thread = await manager.branch_from_turn(thread_id, payload.turnId, title=payload.title)
         turns = db.list_turns(thread.threadId)
         return {"thread": thread.model_dump(), "turns": [turn.model_dump() for turn in turns]}
+
+    @router.post("/threads/{thread_id}/rename")
+    async def rename_thread(thread_id: str, payload: RenameThreadRequest) -> dict[str, Any]:
+        thread = await manager.rename_thread(thread_id, payload.title)
+        return {"thread": thread.model_dump()}
+
+    @router.delete("/threads/{thread_id}")
+    async def delete_thread_branch(thread_id: str) -> dict[str, Any]:
+        return await manager.delete_branch(thread_id)
 
     @router.delete("/conversations/{thread_id}")
     async def delete_conversation(thread_id: str) -> dict[str, Any]:

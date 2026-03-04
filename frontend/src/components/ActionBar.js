@@ -12,23 +12,18 @@ export function renderActionBar(container, state, handlers) {
   const forcedBranchActive = state.forcedBranchNodeId && state.forcedBranchNodeId === selectedNode?.nodeId;
   const pendingMergeActive = state.pendingMergeSourceNodeId && state.pendingMergeSourceNodeId === selectedNode?.nodeId;
   const branchLabel = selectedThread ? getBranchLabel(state, selectedThread.threadId) : "Branch";
-  const subtitle = pendingMergeActive
+  const summary = pendingMergeActive
     ? "Map mode is armed. Pick a destination turn."
     : forcedBranchActive
       ? `Next send branches from ${branchLabel} ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}.`
       : selectedNode?.turn
-      ? `${branchLabel} ${selectedNode.turn.idx === headTurn?.idx ? `T${selectedNode.turn.idx} is current.` : `T${selectedNode.turn.idx} is earlier.`}`
+      ? `${branchLabel} / ${selectedNode.turn.idx === headTurn?.idx ? `T${selectedNode.turn.idx} is current.` : `T${selectedNode.turn.idx} is earlier.`}`
         : "Select a turn to branch, merge, or compare it.";
-  const title = selectedThread
-    ? `${branchLabel} / ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}`
-    : "No active branch";
 
   container.innerHTML = `
     <section class="action-bar">
       <div class="action-bar-copy">
-        <span class="action-bar-label">Actions</span>
-        <div class="action-bar-title">${escapeHtml(title)}</div>
-        <span>${escapeHtml(subtitle)}</span>
+        <span class="action-bar-summary">${escapeHtml(summary)}</span>
       </div>
       <div class="action-bar-buttons">
         <button type="button" class="primary-button" data-action="continue" ${selectedThread ? "" : "disabled"}>Continue</button>

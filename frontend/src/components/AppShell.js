@@ -8,6 +8,18 @@ function ensureImportModalRoot() {
   return root;
 }
 
+function ensureContextMenuRoot() {
+  let root = document.querySelector("#context-menu-root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "context-menu-root";
+    root.className = "context-menu-root";
+    root.hidden = true;
+    document.body.append(root);
+  }
+  return root;
+}
+
 export function renderAppShell(container) {
   container.innerHTML = `
     <aside class="sidebar">
@@ -28,6 +40,7 @@ export function renderAppShell(container) {
           <h2 id="thread-title">No conversation</h2>
           <span id="thread-turn-label" class="topbar-turn">Start</span>
         </div>
+        <div id="action-bar-root" class="topbar-action-slot"></div>
         <div class="topbar-actions">
           <div class="view-toggle" role="tablist" aria-label="View mode">
             <button id="focus-mode-button" class="ghost-button" type="button">Focus</button>
@@ -37,26 +50,23 @@ export function renderAppShell(container) {
         </div>
       </header>
       <div id="error-banner"></div>
-      <section class="workspace-toolbar">
-        <div id="action-bar-root"></div>
-      </section>
 
       <section class="workspace-grid">
         <section class="primary-stage">
-          <section id="focus-layout" class="focus-layout">
-            <section class="transcript-panel transcript-panel-focus">
-              <div id="focus-transcript-view" class="transcript-view"></div>
-            </section>
+          <section id="focus-layout" class="focus-layout mode-stage">
+            <div class="mode-stage-shell focus-stage-shell">
+              <section class="transcript-panel transcript-panel-focus">
+                <div id="focus-transcript-view" class="transcript-view"></div>
+              </section>
+            </div>
           </section>
 
-          <section id="map-layout" class="map-layout">
-            <section class="graph-panel">
-              <div id="graph-view" class="graph-view"></div>
-            </section>
-            <div id="graph-transcript-resizer" class="pane-resizer pane-resizer-vertical" aria-hidden="true"></div>
-            <section class="transcript-panel transcript-panel-map">
-              <div id="map-transcript-view" class="transcript-view"></div>
-            </section>
+          <section id="map-layout" class="map-layout mode-stage">
+            <div class="mode-stage-shell map-stage-shell">
+              <section class="graph-panel">
+                <div id="graph-view" class="graph-view"></div>
+              </section>
+            </div>
           </section>
         </section>
 
@@ -79,8 +89,8 @@ export function renderAppShell(container) {
     comparePanel: container.querySelector("#compare-panel-root"),
     contextPanel: container.querySelector("#context-panel"),
     focusTranscript: container.querySelector("#focus-transcript-view"),
-    mapTranscript: container.querySelector("#map-transcript-view"),
     importModal: ensureImportModalRoot(),
+    contextMenu: ensureContextMenuRoot(),
     title: container.querySelector("#thread-title"),
     turnLabel: container.querySelector("#thread-turn-label"),
     status: container.querySelector("#connection-status"),
@@ -88,6 +98,5 @@ export function renderAppShell(container) {
     mapModeButton: container.querySelector("#map-mode-button"),
     newThread: container.querySelector("#new-thread-button"),
     sidebarResizer: container.querySelector("#sidebar-resizer"),
-    graphTranscriptResizer: container.querySelector("#graph-transcript-resizer"),
   };
 }

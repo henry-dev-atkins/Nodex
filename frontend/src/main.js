@@ -9,7 +9,7 @@ import { renderThreadList } from "./components/ThreadList.js";
 import { renderTranscript } from "./components/Transcript.js";
 import { createLayoutController } from "./layout.js";
 import { threadLabel } from "./rendering.js";
-import { getBranchLabel, getHeadTurn, getSelectedNode, getSelectedThread, parseNodeId } from "./selectors.js";
+import { getBranchLabel, getHeadTurn, getNodeId, getSelectedNode, getSelectedThread, getTurns, parseNodeId } from "./selectors.js";
 import { createStore } from "./store.js";
 import { createUiActions } from "./uiActions.js";
 import { connectEventStream } from "./ws.js";
@@ -20,6 +20,7 @@ const layout = createLayoutController(elements);
 const uiActions = createUiActions(store);
 
 let lastComposerFocusNonce = 0;
+let contextMenuCleanup = null;
 
 function setStatusIndicator(status) {
   const labels = {
@@ -46,10 +47,97 @@ function focusComposer(state) {
     return;
   }
   lastComposerFocusNonce = state.composerFocusNonce;
-  const composer = state.viewMode === "map"
-    ? elements.mapTranscript.querySelector("[data-transcript-composer-input]")
-    : elements.focusTranscript.querySelector("[data-transcript-composer-input]");
+  if (state.viewMode !== "focus") {
+    return;
+  }
+  const composer = elements.focusTranscript.querySelector("[data-transcript-composer-input]");
   composer?.focus();
+}
+
+function closeContextMenu() {
+  contextMenuCleanup?.();
+  contextMenuCleanup = null;
+  elements.contextMenu.hidden = true;
+  elements.contextMenu.innerHTML = "";
+  elements.contextMenu.removeAttribute("style");
+}
+
+function openContextMenu({ x, y, items }) {
+  const menuItems = items.filter(Boolean);
+  if (!menuItems.length) {
+    closeContextMenu();
+    return;
+  }
+  closeContextMenu();
+  elements.contextMenu.innerHTML = `
+    <div class="context-menu-panel" role="menu">
+      ${menuItems
+        .map(
+          (item, index) => `
+            <button
+              type="button"
+              class="context-menu-item ${item.danger ? "is-danger" : ""}"
+              data-context-menu-index="${index}"
+              ${item.disabled ? "disabled" : ""}
+            >
+              ${item.label}
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+  elements.contextMenu.hidden = false;
+  elements.contextMenu.style.left = `${x}px`;
+  elements.contextMenu.style.top = `${y}px`;
+
+  elements.contextMenu.querySelectorAll("[data-context-menu-index]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = menuItems[Number(button.dataset.contextMenuIndex)];
+      closeContextMenu();
+      if (item?.disabled) {
+        return;
+      }
+      await item?.onSelect?.();
+    });
+  });
+
+  requestAnimationFrame(() => {
+    const panel = elements.contextMenu.querySelector(".context-menu-panel");
+    if (!panel) {
+      return;
+    }
+    const rect = panel.getBoundingClientRect();
+    const clampedX = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+    const clampedY = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+    elements.contextMenu.style.left = `${clampedX}px`;
+    elements.contextMenu.style.top = `${clampedY}px`;
+  });
+
+  const handlePointerDown = (event) => {
+    if (!elements.contextMenu.contains(event.target)) {
+      closeContextMenu();
+    }
+  };
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape") {
+      closeContextMenu();
+    }
+  };
+  const handleViewportChange = () => {
+    closeContextMenu();
+  };
+
+  window.addEventListener("pointerdown", handlePointerDown, true);
+  window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("resize", handleViewportChange);
+  window.addEventListener("scroll", handleViewportChange, true);
+  contextMenuCleanup = () => {
+    window.removeEventListener("pointerdown", handlePointerDown, true);
+    window.removeEventListener("keydown", handleKeyDown);
+    window.removeEventListener("resize", handleViewportChange);
+    window.removeEventListener("scroll", handleViewportChange, true);
+  };
 }
 
 function renderTranscriptInto(container, state) {
@@ -104,7 +192,52 @@ function renderViews(state) {
   const selectedThread = getSelectedThread(state);
   const selectedNode = getSelectedNode(state);
 
-  renderThreadList(elements.threadList, state, (threadId) => store.selectConversation(threadId));
+  renderThreadList(elements.threadList, state, {
+    onSelect(threadId) {
+      closeContextMenu();
+      store.selectConversation(threadId);
+    },
+    onContextMenu({ threadId, x, y }) {
+      const thread = state.threads[threadId];
+      if (!thread) {
+        return;
+      }
+      openContextMenu({
+        x,
+        y,
+        items: [
+          {
+            label: "Rename",
+            async onSelect() {
+              const nextTitle = window.prompt("Rename conversation", thread.title || threadLabel(thread));
+              if (!nextTitle || nextTitle.trim() === (thread.title || threadLabel(thread)).trim()) {
+                return;
+              }
+              try {
+                await uiActions.renameThread(thread.threadId, nextTitle.trim());
+              } catch (error) {
+                store.setErrorMessage(error.message);
+              }
+            },
+          },
+          {
+            label: "Delete",
+            danger: true,
+            async onSelect() {
+              if (!window.confirm(`Delete conversation "${threadLabel(thread)}"?`)) {
+                return;
+              }
+              try {
+                await uiActions.deleteConversation(thread.threadId);
+              } catch (error) {
+                store.setErrorMessage(error.message);
+              }
+            },
+          },
+        ],
+      });
+    },
+  });
   renderActionBar(elements.actionBar, state, {
     onContinue() {
       if (!selectedThread) {
@@ -174,6 +307,53 @@ function renderViews(state) {
     onSelectNode({ threadId, turnId }) {
       uiActions.selectNodeOrMerge(threadId, turnId);
     },
+    onNodeContextMenu({ threadId, turnId, x, y }) {
+      const thread = state.threads[threadId];
+      const turn = turnId ? getTurns(state, threadId).find((item) => item.turnId === turnId) || null : null;
+      if (!thread || !turn) {
+        return;
+      }
+      const turns = getTurns(state, threadId);
+      const canDeleteBranch = Boolean(thread.parentThreadId);
+      const isHead = turns[turns.length - 1]?.turnId === turnId;
+      const node = {
+        nodeId: getNodeId(threadId, turnId),
+        thread,
+        turn,
+      };
+      openContextMenu({
+        x,
+        y,
+        items: [
+          {
+            label: isHead ? "Current Head" : "Set Head",
+            disabled: isHead,
+            async onSelect() {
+              try {
+                await uiActions.setHeadFromNode(node);
+              } catch (error) {
+                store.setErrorMessage(error.message);
+              }
+            },
+          },
+          {
+            label: canDeleteBranch ? "Delete Branch" : "Delete Branch (main locked)",
+            danger: true,
+            disabled: !canDeleteBranch,
+            async onSelect() {
+              if (!window.confirm(`Delete branch "${getBranchLabel(state, threadId)}" and its descendants?`)) {
+                return;
+              }
+              try {
+                await uiActions.deleteBranch(threadId);
+              } catch (error) {
+                store.setErrorMessage(error.message);
+              }
+            },
+          },
+        ],
+      });
+    },
     onCreateLink({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId }) {
       store.clearPendingMerge();
       uiActions.openLinkedChildModal({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId });
@@ -183,7 +363,6 @@ function renderViews(state) {
     },
   });
   renderTranscriptInto(elements.focusTranscript, state);
-  renderTranscriptInto(elements.mapTranscript, state);
   renderImportPreviewModal(elements.importModal, state, {
     onClose() {
       store.closeImportModal();

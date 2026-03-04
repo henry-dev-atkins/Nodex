@@ -243,7 +243,42 @@ class CodexManager:
     async def delete_conversation(self, thread_id: str) -> dict[str, Any]:
         await self.get_thread(thread_id)
         conversation_id = self._conversation_root_id(thread_id)
-        thread_ids = self.db.list_conversation_thread_ids(conversation_id)
+        thread_ids = self.db.list_branch_thread_ids(conversation_id)
+        if not thread_ids:
+            return {"conversationId": conversation_id, "deletedThreadIds": []}
+        async with self._session_lock:
+            sessions = [self.sessions.get(item) for item in thread_ids]
+        for session in sessions:
+            if session is not None:
+                await self._retire_session(session)
+        self.db.delete_threads(thread_ids)
+        for deleted_thread_id in thread_ids:
+            await self.ws.emit_thread_deleted(deleted_thread_id, conversation_id)
+        return {"conversationId": conversation_id, "deletedThreadIds": thread_ids}
+
+    async def rename_thread(self, thread_id: str, title: str) -> ThreadRecord:
+        clean_title = title.strip()
+        if not clean_title:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "invalid_request", "message": "Title cannot be empty", "details": {}}},
+            )
+        await self.get_thread(thread_id)
+        updated = self.db.update_thread_title(thread_id, clean_title)
+        if not updated:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "thread_not_found", "message": f"Unknown thread: {thread_id}", "details": {}}},
+            )
+        await self.ws.emit_thread_updated(updated)
+        return updated
+
+    async def delete_branch(self, thread_id: str) -> dict[str, Any]:
+        thread = await self.get_thread(thread_id)
+        if not thread.parentThreadId:
+            return await self.delete_conversation(thread_id)
+        conversation_id = self._conversation_root_id(thread_id)
+        thread_ids = self.db.list_branch_thread_ids(thread_id)
         if not thread_ids:
             return {"conversationId": conversation_id, "deletedThreadIds": []}
         async with self._session_lock:
@@ -953,48 +988,99 @@ class CodexManager:
             )
         return history
 
+    def _sanitize_local_shell_action(self, item: dict[str, Any]) -> dict[str, Any]:
+        action: dict[str, Any] = {
+            "type": "exec",
+            "command": split_command(str(item.get("command", ""))),
+        }
+        working_directory = item.get("cwd") or item.get("working_directory")
+        if working_directory is not None:
+            action["working_directory"] = str(working_directory)
+        timeout_ms = item.get("timeout_ms")
+        if isinstance(timeout_ms, int) and timeout_ms >= 0:
+            action["timeout_ms"] = timeout_ms
+        user = item.get("user")
+        if user is not None:
+            action["user"] = str(user)
+        env = item.get("env")
+        if isinstance(env, dict):
+            sanitized_env = {
+                str(key): str(value)
+                for key, value in env.items()
+                if key is not None and value is not None
+            }
+            if sanitized_env:
+                action["env"] = sanitized_env
+        return action
+
+    def _sanitize_message_history_item(
+        self,
+        role: str,
+        content: list[dict[str, Any]],
+        phase: str | None = None,
+    ) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            "type": "message",
+            "role": role,
+            "content": content,
+        }
+        if phase is not None:
+            item["phase"] = phase
+        return item
+
+    def _sanitize_reasoning_history_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        history_item: dict[str, Any] = {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": text} for text in item.get("summary", [])],
+        }
+        content = [{"type": "reasoning_text", "text": text} for text in item.get("content", [])]
+        if content:
+            history_item["content"] = content
+        encrypted_content = item.get("encrypted_content")
+        if encrypted_content is not None:
+            history_item["encrypted_content"] = encrypted_content
+        return history_item
+
+    def _sanitize_web_search_action(self, item: dict[str, Any]) -> dict[str, Any]:
+        raw_action = item.get("action")
+        if isinstance(raw_action, dict):
+            return {
+                str(key): value
+                for key, value in raw_action.items()
+                if key is not None and value is not None
+            }
+        action = {"type": "search"}
+        query = item.get("query")
+        if query is not None:
+            action["query"] = str(query)
+        return action
+
     def _response_items_from_thread_items(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         history: list[dict[str, Any]] = []
         for item in items:
             item_type = item.get("type")
             if item_type == "userMessage":
-                history.append(
-                    {
-                        "type": "message",
-                        "role": "user",
-                        "content": [self._content_item_from_user_input(part) for part in item.get("content", [])],
-                    }
-                )
+                history.append(self._sanitize_message_history_item(
+                    "user",
+                    [self._content_item_from_user_input(part) for part in item.get("content", [])],
+                ))
                 continue
             if item_type == "agentMessage":
-                history.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": item.get("text", "")}],
-                        "phase": item.get("phase"),
-                    }
-                )
+                history.append(self._sanitize_message_history_item(
+                    "assistant",
+                    [{"type": "output_text", "text": item.get("text", "")}],
+                    phase=item.get("phase"),
+                ))
                 continue
             if item_type == "plan":
-                history.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": item.get("text", "")}],
-                        "phase": "commentary",
-                    }
-                )
+                history.append(self._sanitize_message_history_item(
+                    "assistant",
+                    [{"type": "output_text", "text": item.get("text", "")}],
+                    phase="commentary",
+                ))
                 continue
             if item_type == "reasoning":
-                history.append(
-                    {
-                        "type": "reasoning",
-                        "summary": [{"type": "summary_text", "text": text} for text in item.get("summary", [])],
-                        "content": [{"type": "reasoning_text", "text": text} for text in item.get("content", [])],
-                        "encrypted_content": None,
-                    }
-                )
+                history.append(self._sanitize_reasoning_history_item(item))
                 continue
             if item_type == "commandExecution":
                 history.append(
@@ -1002,14 +1088,7 @@ class CodexManager:
                         "type": "local_shell_call",
                         "call_id": item.get("id"),
                         "status": self._local_shell_status(item.get("status")),
-                        "action": {
-                            "type": "exec",
-                            "command": split_command(str(item.get("command", ""))),
-                            "timeout_ms": None,
-                            "working_directory": item.get("cwd"),
-                            "env": None,
-                            "user": None,
-                        },
+                        "action": self._sanitize_local_shell_action(item),
                     }
                 )
                 continue
@@ -1018,7 +1097,7 @@ class CodexManager:
                     {
                         "type": "web_search_call",
                         "status": "completed",
-                        "action": item.get("action") or {"type": "search", "query": item.get("query")},
+                        "action": self._sanitize_web_search_action(item),
                     }
                 )
                 continue

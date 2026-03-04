@@ -91,6 +91,39 @@ function renderContextSummary(state, contextLinks) {
   `;
 }
 
+function renderTurnStream(summary, blocks) {
+  const streamBlocks = blocks.filter((block) => block?.plainText?.trim() && !String(block.title || "").startsWith("Approval"));
+  return `
+    <div class="turn-stream">
+      <section class="turn-stream-block is-user">
+        <div class="turn-stream-label">You</div>
+        <div class="turn-stream-text">${formatText(summary.prompt)}</div>
+      </section>
+      ${streamBlocks
+        .map((block) => {
+          const tone = block.isReasoning
+            ? "is-reasoning"
+            : block.kind === "assistant"
+              ? "is-assistant"
+              : block.title === "Commentary"
+                ? "is-commentary"
+                : block.kind === "tool"
+                  ? "is-tool"
+                  : block.kind === "error"
+                    ? "is-error"
+                    : "is-note";
+          return `
+            <section class="turn-stream-block ${tone}">
+              <div class="turn-stream-label">${escapeHtml(block.title || "Update")}</div>
+              <div class="turn-stream-text">${formatText(block.plainText)}</div>
+            </section>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function buildTranscriptEntries(state, threadId, targetThreadId = threadId, cutoffTurnId = null) {
   const thread = state.threads[threadId];
   if (!thread) {
@@ -138,6 +171,30 @@ function buildTranscriptEntries(state, threadId, targetThreadId = threadId, cuto
   return entries;
 }
 
+function syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTurn) {
+  const feed = container.querySelector("[data-transcript-feed]");
+  if (!feed) {
+    return;
+  }
+
+  const activeNodeId = state.expandedTurnKey
+    || (selectedNode?.thread?.threadId && selectedNode?.turn?.turnId
+      ? getNodeId(selectedNode.thread.threadId, selectedNode.turn.turnId)
+      : null);
+
+  if (activeNodeId) {
+    const activeRow = feed.querySelector(`[data-turn-node="${activeNodeId}"]`);
+    if (activeRow) {
+      activeRow.scrollIntoView({ block: "nearest" });
+      return;
+    }
+  }
+
+  if (!selectedTurn || headTurn?.turnId === selectedTurn.turnId) {
+    feed.scrollTop = feed.scrollHeight;
+  }
+}
+
 export function renderTranscript(container, state, handlers) {
   const thread = getSelectedThread(state);
   if (!thread) {
@@ -160,17 +217,22 @@ export function renderTranscript(container, state, handlers) {
 
   if (!turns.length) {
     container.innerHTML = `
-      <section class="transcript-header-line" title="This transcript follows the selected branch.">
-        <strong>${branchLabel} / Start</strong>
-      </section>
-      <section class="transcript-composer">
-        <form data-transcript-composer-form="1" class="composer-form">
-          <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
-          <div class="composer-actions">
-            <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
-            <button class="primary-button" type="submit">Send</button>
-          </div>
-        </form>
+      <section class="transcript-shell">
+        <section class="transcript-header-line" title="This transcript follows the selected branch.">
+          <strong>${branchLabel} / Start</strong>
+        </section>
+        <div class="transcript-feed" data-transcript-feed="1">
+          <div class="empty-state">Select a node to inspect a branch transcript.</div>
+        </div>
+        <section class="transcript-composer">
+          <form data-transcript-composer-form="1" class="composer-form">
+            <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
+            <div class="composer-actions">
+              <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
+              <button class="primary-button" type="submit">Send</button>
+            </div>
+          </form>
+        </section>
       </section>
     `;
 
@@ -193,132 +255,117 @@ export function renderTranscript(container, state, handlers) {
   }
 
   container.innerHTML = `
-    <section class="transcript-header-line" title="Imported-link highlighting updates as you browse the branch.">
-      <strong>${branchLabel} / ${focusTurn ? `T${focusTurn.idx}` : "Start"}${activeContextCount ? ` / +${activeContextCount}` : ""}</strong>
-    </section>
-    ${transcriptEntries
-      .map((entry) => {
-        const rowThreadId = entry.threadId;
-        const turn = entry.turn;
-        const rowBranchLabel = getBranchLabel(state, rowThreadId);
-        const key = `${rowThreadId}:${turn.turnId}`;
-        const events = state.eventsByTurn[key] || [];
-        const approvals = getApprovalsForTurn(state, rowThreadId, turn.turnId);
-        const blocks = buildBlocks(turn, events, approvals);
-        const summary = summarizeTurn(turn, blocks, approvals);
-        const contextLinks = getContextLinks(turn);
-        const isCurrentBranchTurn = rowThreadId === thread.threadId;
-        const selected =
-          selectedNode?.thread?.threadId === rowThreadId && selectedNode?.turn?.turnId === turn.turnId ? "selected" : "";
-        const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
-        const isExpanded = state.expandedTurnKey === getNodeId(rowThreadId, turn.turnId);
-        const hasContext = contextLinks.length > 0;
-        const isImportedEntry = Boolean(entry.imported);
-        const isActiveContextTurn = isCurrentBranchTurn && hasContext && turn.idx <= focusCutoffIdx;
-        const statusMark = getStatusMark(turn, approvals);
-        const promptPreview = summarizeText(summary.prompt || "No prompt", 88);
-        const responsePreview = truncateText(getTurnResponse(blocks, summary) || "No response yet.", 110);
-        const showBranchBadge = entry.inherited || entry.imported;
-        const toolLines = blocks
-          .filter((block) => block.kind === "tool" || block.kind === "error" || block.kind === "warning")
-          .map((block) => block.plainText)
-          .filter(Boolean);
-        return `
-          <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isImportedEntry ? "turn-row-imported-entry" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}">
-            <div class="turn-row-head" data-turn-head="${rowThreadId}:${turn.turnId}">
-              <div class="turn-row-main">
-                ${showBranchBadge ? `<span class="turn-row-branch-badge">${escapeHtml(rowBranchLabel)}</span>` : ""}
-                <span class="turn-row-id">T${turn.idx}</span>
-                <span class="turn-row-mark ${statusMark.tone}" title="${escapeHtml(statusMark.title)}">${statusMark.label}</span>
-                <div class="turn-row-preview-stack">
-                  <div class="turn-row-prompt">${escapeHtml(promptPreview)}</div>
-                  <div class="turn-row-response">${escapeHtml(responsePreview)}</div>
-                </div>
-                ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">+${contextLinks.length}</span>` : ""}
-                ${isImportedEntry ? `<span class="turn-row-link-flag" title="Imported into T${entry.importedIntoTurnIdx}">in T${entry.importedIntoTurnIdx}</span>` : ""}
-              </div>
-              <div class="turn-row-actions">
-                <span class="turn-row-expand-hint">${isExpanded ? "Hide" : "Open"}</span>
-              </div>
-            </div>
-            ${pendingApprovals.length ? `<div class="turn-approval-stack">${renderApprovalStrip(pendingApprovals)}</div>` : ""}
-            ${
-              isExpanded
-                ? `
-                  <div class="turn-row-body">
-                    <div class="turn-detail-block">
-                      <span class="turn-detail-label">Prompt</span>
-                      <p class="turn-detail-text">${formatText(summary.prompt)}</p>
+    <section class="transcript-shell">
+      <section class="transcript-header-line" title="Imported-link highlighting updates as you browse the branch.">
+        <strong>${branchLabel} / ${focusTurn ? `T${focusTurn.idx}` : "Start"}${activeContextCount ? ` / +${activeContextCount}` : ""}</strong>
+      </section>
+      <div class="transcript-feed" data-transcript-feed="1">
+        ${transcriptEntries
+          .map((entry) => {
+            const rowThreadId = entry.threadId;
+            const turn = entry.turn;
+            const rowBranchLabel = getBranchLabel(state, rowThreadId);
+            const key = `${rowThreadId}:${turn.turnId}`;
+            const events = state.eventsByTurn[key] || [];
+            const approvals = getApprovalsForTurn(state, rowThreadId, turn.turnId);
+            const blocks = buildBlocks(turn, events, approvals);
+            const summary = summarizeTurn(turn, blocks, approvals);
+            const contextLinks = getContextLinks(turn);
+            const isCurrentBranchTurn = rowThreadId === thread.threadId;
+            const selected =
+              selectedNode?.thread?.threadId === rowThreadId && selectedNode?.turn?.turnId === turn.turnId ? "selected" : "";
+            const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+            const isExpanded = state.expandedTurnKey === getNodeId(rowThreadId, turn.turnId);
+            const hasContext = contextLinks.length > 0;
+            const isImportedEntry = Boolean(entry.imported);
+            const isActiveContextTurn = isCurrentBranchTurn && hasContext && turn.idx <= focusCutoffIdx;
+            const statusMark = getStatusMark(turn, approvals);
+            const promptPreview = summarizeText(summary.prompt || "No prompt", 88);
+            const responsePreview = truncateText(getTurnResponse(blocks, summary) || "No response yet.", 110);
+            const showBranchBadge = entry.inherited || entry.imported;
+            const toolLines = blocks
+              .filter((block) => block.kind === "tool" || block.kind === "error" || block.kind === "warning")
+              .map((block) => block.plainText)
+              .filter(Boolean);
+            return `
+              <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isImportedEntry ? "turn-row-imported-entry" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}">
+                <div class="turn-row-head" data-turn-head="${rowThreadId}:${turn.turnId}">
+                  <div class="turn-row-main">
+                    ${showBranchBadge ? `<span class="turn-row-branch-badge">${escapeHtml(rowBranchLabel)}</span>` : ""}
+                    <span class="turn-row-id">T${turn.idx}</span>
+                    <span class="turn-row-mark ${statusMark.tone}" title="${escapeHtml(statusMark.title)}">${statusMark.label}</span>
+                    <div class="turn-row-preview-stack">
+                      <div class="turn-row-prompt">${escapeHtml(promptPreview)}</div>
+                      <div class="turn-row-response">${escapeHtml(responsePreview)}</div>
                     </div>
-                    <div class="turn-detail-block">
-                      <span class="turn-detail-label">Response</span>
-                      <div class="turn-detail-scroll" data-turn-response-scroll="1">
-                        <p class="turn-detail-text">${formatText(getTurnResponse(blocks, summary))}</p>
-                      </div>
-                    </div>
-                    ${
-                      summary.reasoningPreview
-                        ? `
-                          <div class="turn-detail-block">
-                            <span class="turn-detail-label">Reasoning</span>
-                            <p class="turn-detail-text">${formatText(summary.reasoningPreview)}</p>
-                          </div>
-                        `
-                        : ""
-                    }
-                    ${
-                      toolLines.length
-                        ? `
-                          <div class="turn-detail-block">
-                            <span class="turn-detail-label">Tools</span>
-                            <ul class="turn-detail-list">
-                              ${toolLines.slice(0, 6).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
-                            </ul>
-                          </div>
-                        `
-                        : ""
-                    }
-                    ${renderContextSummary(state, contextLinks)}
-                    ${
-                      approvals.filter((approval) => approval.status !== "pending").length
-                        ? `<div class="turn-approval-stack">${renderApprovalStrip(approvals.filter((approval) => approval.status !== "pending"))}</div>`
-                        : ""
-                    }
+                    ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">+${contextLinks.length}</span>` : ""}
+                    ${isImportedEntry ? `<span class="turn-row-link-flag" title="Imported into T${entry.importedIntoTurnIdx}">in T${entry.importedIntoTurnIdx}</span>` : ""}
                   </div>
-                `
-                : ""
-            }
-          </article>
-        `;
-      })
-      .join("")}
-    <section class="transcript-composer">
-      <div class="transcript-composer-intent">
-        ${
-          forcedBranchActive && selectedTurn
-            ? `Branch from T${selectedTurn.idx}`
-            : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
-              ? `Reply from T${selectedTurn.idx} to branch`
-              : `Continue ${escapeHtml(branchLabel)}`
-        }
+                  <div class="turn-row-actions">
+                    <span class="turn-row-expand-hint">${isExpanded ? "Hide" : "Open"}</span>
+                  </div>
+                </div>
+                ${pendingApprovals.length ? `<div class="turn-approval-stack">${renderApprovalStrip(pendingApprovals)}</div>` : ""}
+                ${
+                  isExpanded
+                    ? `
+                      <div class="turn-row-body">
+                        ${renderTurnStream(summary, blocks)}
+                        ${
+                          toolLines.length && !blocks.some((block) => block.kind === "tool")
+                            ? `
+                              <div class="turn-detail-block">
+                                <span class="turn-detail-label">Tools</span>
+                                <ul class="turn-detail-list">
+                                  ${toolLines.slice(0, 6).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+                                </ul>
+                              </div>
+                            `
+                            : ""
+                        }
+                        ${renderContextSummary(state, contextLinks)}
+                        ${
+                          approvals.filter((approval) => approval.status !== "pending").length
+                            ? `<div class="turn-approval-stack">${renderApprovalStrip(approvals.filter((approval) => approval.status !== "pending"))}</div>`
+                            : ""
+                        }
+                      </div>
+                    `
+                    : ""
+                }
+              </article>
+            `;
+          })
+          .join("")}
       </div>
-      <form data-transcript-composer-form="1" class="composer-form">
-        <textarea
-          data-transcript-composer-input="1"
-          rows="4"
-          placeholder="${escapeHtml(
+      <section class="transcript-composer">
+        <div class="transcript-composer-intent">
+          ${
             forcedBranchActive && selectedTurn
-              ? `Create a new branch from T${selectedTurn.idx}...`
+              ? `Branch from T${selectedTurn.idx}`
               : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
-                ? `Send from T${selectedTurn.idx} to create a new branch...`
-                : "Send the next message on this branch...",
-          )}"
-        ></textarea>
-        <div class="composer-actions">
-          <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
-          <button class="primary-button" type="submit">Send</button>
+                ? `Reply from T${selectedTurn.idx} to branch`
+                : `Continue ${escapeHtml(branchLabel)}`
+          }
         </div>
-      </form>
+        <form data-transcript-composer-form="1" class="composer-form">
+          <textarea
+            data-transcript-composer-input="1"
+            rows="4"
+            placeholder="${escapeHtml(
+              forcedBranchActive && selectedTurn
+                ? `Create a new branch from T${selectedTurn.idx}...`
+                : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
+                  ? `Send from T${selectedTurn.idx} to create a new branch...`
+                  : "Send the next message on this branch...",
+            )}"
+          ></textarea>
+          <div class="composer-actions">
+            <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
+            <button class="primary-button" type="submit">Send</button>
+          </div>
+        </form>
+      </section>
     </section>
   `;
 
@@ -371,4 +418,6 @@ export function renderTranscript(container, state, handlers) {
       input.value = "";
     }
   });
+
+  requestAnimationFrame(() => syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTurn));
 }

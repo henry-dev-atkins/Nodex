@@ -31,6 +31,54 @@ export function createUiActions(store) {
     }
   }
 
+  async function renameThread(threadId, title) {
+    const response = await apiPost(`/api/threads/${threadId}/rename`, { title });
+    if (response.thread) {
+      store.applyThread(response.thread);
+    }
+    return response.thread;
+  }
+
+  async function deleteBranch(threadId) {
+    const response = await apiDelete(`/api/threads/${threadId}`);
+    for (const deletedId of response.deletedThreadIds || []) {
+      store.removeThread(deletedId);
+    }
+    return response;
+  }
+
+  async function setHeadFromNode(node) {
+    if (!node?.thread?.threadId || !node?.turn?.turnId) {
+      return null;
+    }
+    const state = store.getState();
+    const headTurn = getHeadTurn(state, node.thread.threadId);
+    if (headTurn?.turnId === node.turn.turnId) {
+      store.selectNode(node.thread.threadId, node.turn.turnId);
+      store.setViewMode("focus");
+      return null;
+    }
+    const response = await apiPost(`/api/threads/${node.thread.threadId}/branch`, {
+      turnId: node.turn.turnId,
+      title: null,
+    });
+    const branchTurns = response.turns || [];
+    if (response.thread) {
+      store.applyThread(response.thread);
+    }
+    if (branchTurns.length) {
+      store.applyTurns(branchTurns);
+      const nextHead = branchTurns[branchTurns.length - 1];
+      store.selectNode(response.thread.threadId, nextHead.turnId);
+    } else if (response.thread) {
+      store.selectNode(response.thread.threadId, null);
+    }
+    store.clearBranchIntent();
+    store.clearPendingMerge();
+    store.setViewMode("focus");
+    return response.thread || null;
+  }
+
   async function requestImportPreview({ sourceThreadId, sourceTurnIds = [], targetThreadId, targetTurnId }) {
     try {
       store.setImportModalState({
@@ -124,11 +172,14 @@ export function createUiActions(store) {
   }
 
   return {
+    deleteBranch,
     deleteConversation,
     requestImportPreview,
     openLinkedChildModal,
     selectNodeOrMerge,
     submitFromNode,
     commitImport,
+    renameThread,
+    setHeadFromNode,
   };
 }

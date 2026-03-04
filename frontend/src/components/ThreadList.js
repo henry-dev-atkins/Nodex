@@ -11,7 +11,7 @@ function statusClass(status) {
   return "is-idle";
 }
 
-export function renderThreadList(container, state, onSelect) {
+export function renderThreadList(container, state, handlers) {
   const roots = getConversationRoots(state);
 
   if (!roots.length) {
@@ -35,6 +35,14 @@ export function renderThreadList(container, state, onSelect) {
     .join("");
 
   container.querySelectorAll("[data-thread-id]").forEach((element) => {
-    element.addEventListener("click", () => onSelect(element.dataset.threadId));
+    element.addEventListener("click", () => handlers.onSelect?.(element.dataset.threadId));
+    element.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      handlers.onContextMenu?.({
+        threadId: element.dataset.threadId,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    });
   });
 }

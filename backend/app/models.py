@@ -83,6 +83,10 @@ class BranchThreadRequest(CamelModel):
     title: str | None = None
 
 
+class RenameThreadRequest(CamelModel):
+    title: str = Field(min_length=1)
+
+
 class ApprovalDecisionRequest(CamelModel):
     decision: Literal["approve", "deny"]
 

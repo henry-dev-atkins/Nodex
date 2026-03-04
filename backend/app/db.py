@@ -193,6 +193,15 @@ class Database:
         self.upsert_thread(thread)
         return thread
 
+    def update_thread_title(self, thread_id: str, title: str) -> ThreadRecord | None:
+        thread = self.get_thread(thread_id)
+        if not thread:
+            return None
+        thread.title = title
+        thread.updatedAt = utc_now()
+        self.upsert_thread(thread)
+        return thread
+
     def upsert_turn(self, turn: TurnRecord) -> None:
         with self._lock:
             self._conn.execute(
@@ -445,6 +454,27 @@ class Database:
             children_by_parent.setdefault(thread.parentThreadId, []).append(thread.threadId)
         ordered_ids: list[str] = []
         stack = [root_id]
+        while stack:
+            current = stack.pop()
+            if current in ordered_ids:
+                continue
+            ordered_ids.append(current)
+            for child_id in reversed(children_by_parent.get(current, [])):
+                stack.append(child_id)
+        return ordered_ids
+
+    def list_branch_thread_ids(self, thread_id: str) -> list[str]:
+        threads = self.list_threads()
+        children_by_parent: dict[str, list[str]] = {}
+        known_ids = {thread.threadId for thread in threads}
+        if thread_id not in known_ids:
+            return []
+        for thread in threads:
+            if not thread.parentThreadId:
+                continue
+            children_by_parent.setdefault(thread.parentThreadId, []).append(thread.threadId)
+        ordered_ids: list[str] = []
+        stack = [thread_id]
         while stack:
             current = stack.pop()
             if current in ordered_ids:

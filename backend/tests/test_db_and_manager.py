@@ -407,6 +407,42 @@ def test_sync_thread_snapshot_preserves_existing_turn_context_links() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
+def test_response_history_omits_null_local_shell_action_fields() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        history = manager._response_items_from_thread_items(
+            [
+                {
+                    "type": "commandExecution",
+                    "id": "cmd-1",
+                    "status": "completed",
+                    "command": "python -V",
+                    "cwd": None,
+                    "env": None,
+                    "user": None,
+                }
+            ]
+        )
+
+        assert history == [
+            {
+                "type": "local_shell_call",
+                "call_id": "cmd-1",
+                "status": "completed",
+                "action": {
+                    "type": "exec",
+                    "command": ["python", "-V"],
+                },
+            }
+        ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 class FakeRpc:
     def __init__(self) -> None:
         self.responses: list[tuple[object, object, object]] = []

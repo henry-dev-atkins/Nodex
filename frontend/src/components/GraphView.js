@@ -1,12 +1,7 @@
 import { describeDecision, escapeHtml, summarizeText } from "../rendering.js";
 import { getApprovalsForTurn, getBranchLabel, getConversationChildrenMap, getConversationThreads, getNodeId, getSelectedConversation, getSelectedNode, getTurns } from "../selectors.js";
 
-const GRAPH_SCALE_MIN = 0.55;
-const GRAPH_SCALE_MAX = 2.2;
-const GRAPH_SCALE_STEP = 0.16;
-const DEFAULT_VIEWPORT = { x: 28, y: 20, scale: 1 };
 const LANE_ORDER_STORAGE_KEY = "codex-ui-graph-lane-order-v1";
-const viewportByConversation = new Map();
 const laneOrderByConversation = new Map();
 const NODE_WIDTH = 196;
 const NODE_HEIGHT = 56;
@@ -154,40 +149,6 @@ function buildActiveContextState(state) {
   return { sourceNodeIds, destinationNodeIds, lineageNodeIds };
 }
 
-function clampScale(scale) {
-  return Math.min(Math.max(scale, GRAPH_SCALE_MIN), GRAPH_SCALE_MAX);
-}
-
-function getViewport(conversationId) {
-  const existing = viewportByConversation.get(conversationId);
-  if (existing) {
-    return existing;
-  }
-  const next = { ...DEFAULT_VIEWPORT };
-  viewportByConversation.set(conversationId, next);
-  return next;
-}
-
-function setViewport(conversationId, patch) {
-  const current = getViewport(conversationId);
-  const next = {
-    ...current,
-    ...patch,
-    scale: clampScale(patch.scale ?? current.scale),
-  };
-  viewportByConversation.set(conversationId, next);
-  return next;
-}
-
-function applyViewport(canvas, zoomReadout, viewport) {
-  if (canvas) {
-    canvas.style.transform = `translate(${Math.round(viewport.x)}px, ${Math.round(viewport.y)}px) scale(${viewport.scale})`;
-  }
-  if (zoomReadout) {
-    zoomReadout.textContent = `${Math.round(viewport.scale * 100)}%`;
-  }
-}
-
 function edgePath(from, to) {
   const fromX = from.x;
   const fromY = from.y + NODE_HEIGHT / 2;
@@ -204,12 +165,11 @@ function previewPath(from, to) {
   return `M ${fromX} ${fromY} C ${fromX} ${midY}, ${to.x} ${midY}, ${to.x} ${to.y}`;
 }
 
-function toWorldPoint(event, viewportRect, viewport) {
-  const pointerX = event.clientX - viewportRect.left;
-  const pointerY = event.clientY - viewportRect.top;
+function getCanvasPoint(event, canvasElement) {
+  const rect = canvasElement.getBoundingClientRect();
   return {
-    x: (pointerX - viewport.x) / viewport.scale,
-    y: (pointerY - viewport.y) / viewport.scale,
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
   };
 }
 
@@ -218,6 +178,27 @@ function isValidLink(sourceNode, targetNode) {
     return false;
   }
   return sourceNode.id !== targetNode.id;
+}
+
+function getGraphBounds(nodes) {
+  if (!nodes.length) {
+    return {
+      minX: 0,
+      maxX: NODE_WIDTH,
+      minY: 0,
+      maxY: NODE_HEIGHT,
+    };
+  }
+  const minNodeX = Math.min(...nodes.map((node) => node.x - NODE_WIDTH / 2));
+  const maxNodeX = Math.max(...nodes.map((node) => node.x + NODE_WIDTH / 2));
+  const minNodeY = Math.min(...nodes.map((node) => node.y - NODE_HEIGHT / 2));
+  const maxNodeY = Math.max(...nodes.map((node) => node.y + NODE_HEIGHT / 2));
+  return {
+    minX: minNodeX - 32,
+    maxX: maxNodeX + 32,
+    minY: Math.min(24, minNodeY - 48),
+    maxY: maxNodeY + 48,
+  };
 }
 
 export function renderGraphView(container, state, handlers) {
@@ -243,7 +224,6 @@ export function renderGraphView(container, state, handlers) {
   const selectedNode = getSelectedNode(state);
   const activeContext = buildActiveContextState(state);
   const pendingMergeNodeId = state.pendingMergeSourceNodeId;
-  const viewportState = getViewport(conversation.threadId);
   const laneGap = 244;
   const rowGap = 88;
   const leftPadding = 148;
@@ -271,8 +251,6 @@ export function renderGraphView(container, state, handlers) {
         id: getNodeId(thread.threadId, null),
         threadId: thread.threadId,
         turnId: null,
-        turnIdx: 0,
-        startedAt: thread.updatedAt,
         x,
         y: topPadding + threadBase * rowGap,
         title: "Start here",
@@ -294,8 +272,6 @@ export function renderGraphView(container, state, handlers) {
         id: getNodeId(thread.threadId, turn.turnId),
         threadId: thread.threadId,
         turnId: turn.turnId,
-        turnIdx: turn.idx,
-        startedAt: turn.startedAt,
         x,
         y: topPadding + (threadBase + index) * rowGap,
         title: summarizeText(turn.userText || "No prompt", 42),
@@ -354,95 +330,100 @@ export function renderGraphView(container, state, handlers) {
     }
   }
 
-  const width = Math.max(880, leftPadding * 2 + Math.max(laneCount - 1, 0) * laneGap + NODE_WIDTH);
-  const maxDepth = Math.max(...nodes.map((node) => Math.round((node.y - topPadding) / rowGap)), 0);
-  const height = Math.max(520, topPadding + maxDepth * rowGap + 140);
+  const graphBounds = getGraphBounds(nodes);
+  const paddingX = 52;
+  const paddingY = 40;
+  const offsetX = paddingX - graphBounds.minX;
+  const offsetY = paddingY - graphBounds.minY;
+  nodes.forEach((node) => {
+    node.x += offsetX;
+    node.y += offsetY;
+  });
+  laneLabelRows.forEach((row) => {
+    row.x += offsetX;
+  });
+  const laneOriginX = leftPadding + offsetX;
+  const width = Math.max(720, Math.ceil(graphBounds.maxX - graphBounds.minX + paddingX * 2));
+  const height = Math.max(520, Math.ceil(graphBounds.maxY - graphBounds.minY + paddingY * 2));
 
   container.innerHTML = `
     <div class="graph-toolbar">
-      ${
-        pendingMergeNodeId
-          ? '<div class="graph-toolbar-note">Merge armed. Select a destination turn.</div>'
-          : ""
-      }
+      ${pendingMergeNodeId ? '<div class="graph-toolbar-note">Merge armed. Select a destination turn.</div>' : '<div class="graph-toolbar-note">Overview</div>'}
       <div class="graph-controls">
-        <button type="button" class="ghost-button graph-control-button" data-graph-zoom="out">-</button>
-        <span class="graph-zoom-readout" data-graph-zoom-readout>${Math.round(viewportState.scale * 100)}%</span>
-        <button type="button" class="ghost-button graph-control-button" data-graph-zoom="in">+</button>
-        <button type="button" class="ghost-button graph-control-button" data-graph-zoom="reset" title="Reset zoom">1:1</button>
+        <span class="graph-zoom-readout">Centered</span>
       </div>
     </div>
     <div class="graph-viewport" data-graph-viewport>
-      <div class="graph-canvas" data-graph-canvas style="transform: translate(${Math.round(viewportState.x)}px, ${Math.round(viewportState.y)}px) scale(${viewportState.scale})">
-        <svg class="graph-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="xMidYMin meet">
-          <rect class="graph-canvas-fill" x="0" y="0" width="${width}" height="${height}" />
-          ${laneLabelRows
-            .map(
-              ({ thread, x, branchLabel, branchSummary }) => `
-                <g class="graph-lane-header" data-lane-thread-id="${thread.threadId}" transform="translate(${x - NODE_WIDTH / 2}, 24)" title="${escapeHtml(branchSummary)}">
-                  <text class="graph-lane-label" x="0" y="0">${escapeHtml(branchLabel)}</text>
-                </g>
-              `,
-            )
-            .join("")}
-          ${primaryEdges
-            .map(
-              (edge) => `<path class="graph-primary-edge${edge.branch ? " is-branch-edge" : ""}" d="${edgePath(edge.from, edge.to)}" />`,
-            )
-            .join("")}
-          ${contextEdges
-            .map(
-              (edge) => `<path class="graph-context-edge${edge.active ? " is-active" : ""}" d="${edgePath(edge.from, edge.to)}" />`,
-            )
-            .join("")}
-          <path class="graph-link-preview" data-link-preview style="display:none" />
-          ${nodes
-            .map((node) => {
-              const activeContextSource = activeContext.sourceNodeIds.has(node.id);
-              const activeContextDestination = activeContext.destinationNodeIds.has(node.id);
-              const isLineageNode = activeContext.lineageNodeIds.has(node.id);
-              const classes = [
-                "graph-node",
-                node.selected ? "selected" : "",
-                node.running ? "is-running" : "",
-                node.denied ? "is-denied" : "",
-                node.contextLinkCount ? "has-import" : "",
-                pendingMergeNodeId === node.id ? "is-merge-source" : "",
-                isLineageNode ? "is-lineage-node" : "",
-                activeContextSource ? "is-context-source" : "",
-                activeContextDestination ? "is-context-destination" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
-              return `
-                <g class="${classes}" data-node-id="${node.id}" data-thread-id="${node.threadId}" data-turn-id="${node.turnId || ""}">
-                  <rect class="graph-node-box" x="${node.x - NODE_WIDTH / 2}" y="${node.y - NODE_HEIGHT / 2}" width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="4" />
-                  ${
-                    node.contextLinkCount
-                      ? `<rect class="graph-node-import-bar" x="${node.x + NODE_WIDTH / 2 - 4}" y="${node.y - NODE_HEIGHT / 2}" width="4" height="${NODE_HEIGHT}" rx="2" />`
-                      : ""
-                  }
-                  <text class="graph-node-title" x="${node.x - NODE_WIDTH / 2 + 10}" y="${node.y - 6}">${escapeHtml(node.title)}</text>
-                  <text class="graph-node-preview" x="${node.x - NODE_WIDTH / 2 + 10}" y="${node.y + 14}">${escapeHtml(node.meta)}</text>
-                  ${
-                    node.turnId
-                      ? `<circle class="graph-link-handle" cx="${node.x + NODE_WIDTH / 2 + 6}" cy="${node.y}" r="4" data-link-handle="1" data-source-node-id="${node.id}"></circle>`
-                      : ""
-                  }
-                </g>
-              `;
-            })
-            .join("")}
-        </svg>
+      <div class="graph-stage" data-graph-stage>
+        <div class="graph-canvas" data-graph-canvas style="width:${width}px;height:${height}px">
+          <svg class="graph-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+            <rect class="graph-canvas-fill" x="0" y="0" width="${width}" height="${height}" />
+            ${laneLabelRows
+              .map(
+                ({ thread, x, branchLabel, branchSummary }) => `
+                  <g class="graph-lane-header" data-lane-thread-id="${thread.threadId}" transform="translate(${x - NODE_WIDTH / 2}, 24)" title="${escapeHtml(branchSummary)}">
+                    <text class="graph-lane-label" x="0" y="0">${escapeHtml(branchLabel)}</text>
+                  </g>
+                `,
+              )
+              .join("")}
+            ${primaryEdges
+              .map(
+                (edge) => `<path class="graph-primary-edge${edge.branch ? " is-branch-edge" : ""}" d="${edgePath(edge.from, edge.to)}" />`,
+              )
+              .join("")}
+            ${contextEdges
+              .map(
+                (edge) => `<path class="graph-context-edge${edge.active ? " is-active" : ""}" d="${edgePath(edge.from, edge.to)}" />`,
+              )
+              .join("")}
+            <path class="graph-link-preview" data-link-preview style="display:none" />
+            ${nodes
+              .map((node) => {
+                const activeContextSource = activeContext.sourceNodeIds.has(node.id);
+                const activeContextDestination = activeContext.destinationNodeIds.has(node.id);
+                const isLineageNode = activeContext.lineageNodeIds.has(node.id);
+                const classes = [
+                  "graph-node",
+                  node.selected ? "selected" : "",
+                  node.running ? "is-running" : "",
+                  node.denied ? "is-denied" : "",
+                  node.contextLinkCount ? "has-import" : "",
+                  pendingMergeNodeId === node.id ? "is-merge-source" : "",
+                  isLineageNode ? "is-lineage-node" : "",
+                  activeContextSource ? "is-context-source" : "",
+                  activeContextDestination ? "is-context-destination" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                return `
+                  <g class="${classes}" data-node-id="${node.id}" data-thread-id="${node.threadId}" data-turn-id="${node.turnId || ""}">
+                    <rect class="graph-node-box" x="${node.x - NODE_WIDTH / 2}" y="${node.y - NODE_HEIGHT / 2}" width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="4" />
+                    ${
+                      node.contextLinkCount
+                        ? `<rect class="graph-node-import-bar" x="${node.x + NODE_WIDTH / 2 - 4}" y="${node.y - NODE_HEIGHT / 2}" width="4" height="${NODE_HEIGHT}" rx="2" />`
+                        : ""
+                    }
+                    <text class="graph-node-title" x="${node.x - NODE_WIDTH / 2 + 10}" y="${node.y - 6}">${escapeHtml(node.title)}</text>
+                    <text class="graph-node-preview" x="${node.x - NODE_WIDTH / 2 + 10}" y="${node.y + 14}">${escapeHtml(node.meta)}</text>
+                    ${
+                      node.turnId
+                        ? `<circle class="graph-link-handle" cx="${node.x + NODE_WIDTH / 2 + 6}" cy="${node.y}" r="4" data-link-handle="1" data-source-node-id="${node.id}"></circle>`
+                        : ""
+                    }
+                  </g>
+                `;
+              })
+              .join("")}
+          </svg>
+        </div>
       </div>
     </div>
   `;
 
   const viewportElement = container.querySelector("[data-graph-viewport]");
   const canvasElement = container.querySelector("[data-graph-canvas]");
-  const zoomReadout = container.querySelector("[data-graph-zoom-readout]");
   const previewLink = container.querySelector("[data-link-preview]");
-  applyViewport(canvasElement, zoomReadout, getViewport(conversation.threadId));
 
   container.querySelectorAll("[data-node-id]").forEach((element) => {
     element.addEventListener("click", (event) => {
@@ -454,48 +435,18 @@ export function renderGraphView(container, state, handlers) {
         turnId: element.dataset.turnId || null,
       });
     });
-  });
-
-  container.querySelectorAll("[data-graph-zoom]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const action = button.dataset.graphZoom;
-      const current = getViewport(conversation.threadId);
-      if (action === "reset") {
-        applyViewport(canvasElement, zoomReadout, setViewport(conversation.threadId, DEFAULT_VIEWPORT));
-        return;
-      }
-      const nextScale = action === "in"
-        ? current.scale * (1 + GRAPH_SCALE_STEP)
-        : current.scale * (1 - GRAPH_SCALE_STEP);
-      applyViewport(canvasElement, zoomReadout, setViewport(conversation.threadId, { scale: nextScale }));
+    element.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handlers.onNodeContextMenu?.({
+        threadId: element.dataset.threadId,
+        turnId: element.dataset.turnId || null,
+        x: event.clientX,
+        y: event.clientY,
+      });
     });
   });
 
-  viewportElement?.addEventListener(
-    "wheel",
-    (event) => {
-      event.preventDefault();
-      const rect = viewportElement.getBoundingClientRect();
-      const current = getViewport(conversation.threadId);
-      const nextScale = clampScale(current.scale * (event.deltaY < 0 ? 1 + GRAPH_SCALE_STEP : 1 - GRAPH_SCALE_STEP));
-      if (nextScale === current.scale) {
-        return;
-      }
-      const pointerX = event.clientX - rect.left;
-      const pointerY = event.clientY - rect.top;
-      const worldX = (pointerX - current.x) / current.scale;
-      const worldY = (pointerY - current.y) / current.scale;
-      const nextViewport = setViewport(conversation.threadId, {
-        scale: nextScale,
-        x: pointerX - worldX * nextScale,
-        y: pointerY - worldY * nextScale,
-      });
-      applyViewport(canvasElement, zoomReadout, nextViewport);
-    },
-    { passive: false },
-  );
-
-  let panState = null;
   let linkState = null;
   let laneDragState = null;
   let hoveredTargetElement = null;
@@ -505,17 +456,6 @@ export function renderGraphView(container, state, handlers) {
       hoveredTargetElement.classList.remove("is-link-target");
       hoveredTargetElement = null;
     }
-  }
-
-  function stopPan(event) {
-    if (!panState || (event && event.pointerId !== panState.pointerId)) {
-      return;
-    }
-    if (viewportElement?.hasPointerCapture?.(panState.pointerId)) {
-      viewportElement.releasePointerCapture(panState.pointerId);
-    }
-    viewportElement?.classList.remove("is-panning");
-    panState = null;
   }
 
   function stopLink(event) {
@@ -544,11 +484,9 @@ export function renderGraphView(container, state, handlers) {
     viewportElement?.classList.remove("is-lane-dragging");
     const laneHeader = container.querySelector(`[data-lane-thread-id="${laneDragState.threadId}"]`);
     laneHeader?.classList.remove("is-dragging");
-    if (commit && event) {
-      const rect = viewportElement.getBoundingClientRect();
-      const viewport = getViewport(conversation.threadId);
-      const worldPoint = toWorldPoint(event, rect, viewport);
-      const nextIndex = Math.round((worldPoint.x - leftPadding) / laneGap);
+    if (commit && event && canvasElement) {
+      const worldPoint = getCanvasPoint(event, canvasElement);
+      const nextIndex = Math.round((worldPoint.x - laneOriginX) / laneGap);
       const nextOrder = moveThreadLane(laneOrder, laneDragState.threadId, nextIndex);
       if (nextOrder.join("|") !== laneOrder.join("|")) {
         laneOrderByConversation.set(conversation.threadId, nextOrder);
@@ -597,33 +535,12 @@ export function renderGraphView(container, state, handlers) {
     });
   });
 
-  viewportElement?.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || linkState || laneDragState) {
-      return;
-    }
-    if (event.target.closest("[data-node-id],button")) {
-      return;
-    }
-    const current = getViewport(conversation.threadId);
-    panState = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: current.x,
-      originY: current.y,
-    };
-    viewportElement.classList.add("is-panning");
-    viewportElement.setPointerCapture(event.pointerId);
-  });
-
   viewportElement?.addEventListener("pointermove", (event) => {
     if (laneDragState && event.pointerId === laneDragState.pointerId) {
       return;
     }
-    if (linkState && event.pointerId === linkState.pointerId) {
-      const rect = viewportElement.getBoundingClientRect();
-      const viewport = getViewport(conversation.threadId);
-      const worldPoint = toWorldPoint(event, rect, viewport);
+    if (linkState && event.pointerId === linkState.pointerId && canvasElement) {
+      const worldPoint = getCanvasPoint(event, canvasElement);
       previewLink?.setAttribute(
         "d",
         previewPath(
@@ -640,14 +557,6 @@ export function renderGraphView(container, state, handlers) {
           hoveredTargetElement.classList.add("is-link-target");
         }
       }
-      return;
-    }
-    if (panState && event.pointerId === panState.pointerId) {
-      const nextViewport = setViewport(conversation.threadId, {
-        x: panState.originX + (event.clientX - panState.startX),
-        y: panState.originY + (event.clientY - panState.startY),
-      });
-      applyViewport(canvasElement, zoomReadout, nextViewport);
     }
   });
 
@@ -670,12 +579,10 @@ export function renderGraphView(container, state, handlers) {
       stopLink(event);
       return;
     }
-    stopPan(event);
   });
 
   viewportElement?.addEventListener("pointercancel", (event) => {
     stopLaneDrag(event, false);
     stopLink(event);
-    stopPan(event);
   });
 }
