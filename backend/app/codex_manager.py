@@ -233,19 +233,47 @@ class CodexManager:
                 status_code=409,
                 detail={"error": {"code": "turn_in_progress", "message": "Cannot branch from an active turn", "details": {}}},
             )
-        parent_session = await self.get_or_resume_session(thread_id)
-        source = await parent_session.rpc.request_with_retry(
-            "thread/read",
-            {"threadId": parent_session.thread_id or thread_id, "includeTurns": True},
-            timeout_s=60,
+        parent_thread = self.db.get_thread(thread_id)
+        if not parent_thread:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "thread_not_found", "message": f"Unknown thread: {thread_id}", "details": {}}},
+            )
+        history = self._history_from_turn_snapshots(
+            self._lineage_turn_snapshots(thread_id, upto_turn_id=turn_id, include_error_turns=False),
+            include_tool_calls=False,
         )
-        history = self._build_response_history(source["thread"], turn_id, include_tool_calls=False)
         child_session = await self._spawn_session()
-        resumed = await child_session.rpc.request_with_retry(
-            "thread/resume",
-            self._thread_resume_params(parent_session.thread_id or thread_id, history=history),
-            timeout_s=60,
-        )
+        try:
+            resumed = await child_session.rpc.request_with_retry(
+                "thread/resume",
+                self._thread_resume_params(self._remote_thread_id(parent_thread), history=history),
+                timeout_s=60,
+            )
+        except TimeoutError as exc:
+            await self._retire_session(child_session)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": {
+                        "code": "codex_rpc_timeout",
+                        "message": "Timed out while creating a branch from this turn",
+                        "details": {},
+                    }
+                },
+            ) from exc
+        except JsonRpcError as exc:
+            await self._retire_session(child_session)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": {
+                        "code": "codex_rpc_error",
+                        "message": exc.message,
+                        "details": {"rpcCode": exc.code, "rpcData": exc.data},
+                    }
+                },
+            ) from exc
         child_thread = resumed["thread"]
         child_thread_id = child_thread["id"]
         child_session.local_thread_id = child_thread_id

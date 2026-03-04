@@ -261,7 +261,9 @@ function renderViews(state) {
       if (!selectedThread) {
         return;
       }
-      const anchorTurn = selectedNode?.turn || getHeadTurn(state, selectedThread.threadId);
+      const anchorTurn = selectedNode?.thread?.threadId === selectedThread.threadId
+        ? selectedNode?.turn
+        : getHeadTurn(state, selectedThread.threadId);
       if (!anchorTurn) {
         store.requestComposerFocus();
         return;
@@ -318,10 +320,43 @@ function renderViews(state) {
     onNodeContextMenu({ threadId, turnId, x, y }) {
       const thread = state.threads[threadId];
       const turn = turnId ? getTurns(state, threadId).find((item) => item.turnId === turnId) || null : null;
-      if (!thread || !turn) {
+      if (!thread) {
         return;
       }
       const turns = getTurns(state, threadId);
+      const isEmptyStartNode = !turn && turns.length === 0;
+      if (isEmptyStartNode) {
+        const canDeleteBranch = Boolean(thread.parentThreadId);
+        openContextMenu({
+          x,
+          y,
+          items: [
+            {
+              label: canDeleteBranch ? "Delete Empty Branch" : "Delete Empty Conversation",
+              danger: true,
+              async onSelect() {
+                const label = canDeleteBranch ? getBranchLabel(state, threadId) : threadLabel(thread);
+                if (!window.confirm(`Delete "${label}"?`)) {
+                  return;
+                }
+                try {
+                  if (canDeleteBranch) {
+                    await uiActions.deleteBranch(threadId);
+                  } else {
+                    await uiActions.deleteConversation(threadId);
+                  }
+                } catch (error) {
+                  store.setErrorMessage(error.message);
+                }
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (!turn) {
+        return;
+      }
       const canDeleteBranch = Boolean(thread.parentThreadId);
       const isHead = turns[turns.length - 1]?.turnId === turnId;
       const node = {
