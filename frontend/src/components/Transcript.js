@@ -1,10 +1,17 @@
 import { buildBlocks, escapeHtml, formatText, humanizeTurnStatus, normalizeText, summarizeText, summarizeTurn, truncateText } from "../rendering.js";
-import { getApprovalsForTurn, getBranchLabel, getHeadTurn, getNodeId, getSelectedNode, getSelectedThread, getTurns } from "../selectors.js";
-
-function getContextLinks(turn) {
-  const links = turn?.metadata?.contextLinks;
-  return Array.isArray(links) ? links.filter((link) => link?.sourceThreadId && link?.sourceTurnId) : [];
-}
+import {
+  getApprovalsForTurn,
+  getBranchLabel,
+  getContextLinkAnchor,
+  getContextLinkMode,
+  getContextLinkScopeCount,
+  getContextLinks,
+  getHeadTurn,
+  getNodeId,
+  getSelectedNode,
+  getSelectedThread,
+  getTurns,
+} from "../selectors.js";
 
 function getTurnResponse(blocks, summary) {
   const assistant = [...blocks].reverse().find((block) => block.kind === "assistant");
@@ -81,9 +88,14 @@ function renderContextSummary(state, contextLinks) {
       <ul class="turn-detail-list">
         ${contextLinks
           .map((link) => {
-            const sourceTurn = getTurns(state, link.sourceThreadId).find((item) => item.turnId === link.sourceTurnId);
-            const label = sourceTurn ? `T${sourceTurn.idx}` : link.sourceTurnId.slice(0, 8);
-            return `<li>${escapeHtml(getBranchLabel(state, link.sourceThreadId))} / ${escapeHtml(label)}</li>`;
+            const anchor = getContextLinkAnchor(link);
+            if (!anchor) {
+              return "";
+            }
+            const sourceTurn = getTurns(state, anchor.threadId).find((item) => item.turnId === anchor.turnId);
+            const label = sourceTurn ? `T${sourceTurn.idx}` : anchor.turnId.slice(0, 8);
+            const scopeCount = getContextLinkScopeCount(link);
+            return `<li>${escapeHtml(getBranchLabel(state, anchor.threadId))} / ${escapeHtml(label)} · ${escapeHtml(getContextLinkMode(link))} · ${scopeCount} turn${scopeCount === 1 ? "" : "s"}</li>`;
           })
           .join("")}
       </ul>
@@ -140,18 +152,24 @@ function buildTranscriptEntries(state, threadId, targetThreadId = threadId, cuto
 
   for (const turn of visibleTurns) {
     for (const link of getContextLinks(turn)) {
-      const importedTurn = getTurns(state, link.sourceThreadId).find((item) => item.turnId === link.sourceTurnId);
-      const importedNodeId = getNodeId(link.sourceThreadId, link.sourceTurnId);
+      const anchor = getContextLinkAnchor(link);
+      if (!anchor) {
+        continue;
+      }
+      const importedTurn = getTurns(state, anchor.threadId).find((item) => item.turnId === anchor.turnId);
+      const importedNodeId = getNodeId(anchor.threadId, anchor.turnId);
       if (!importedTurn || seenNodeIds.has(importedNodeId)) {
         continue;
       }
       entries.push({
-        threadId: link.sourceThreadId,
+        threadId: anchor.threadId,
         turn: importedTurn,
         inherited: false,
         imported: true,
         importedIntoTurnId: turn.turnId,
         importedIntoTurnIdx: turn.idx,
+        mergeMode: getContextLinkMode(link),
+        sourceNodeCount: getContextLinkScopeCount(link),
       });
       seenNodeIds.add(importedNodeId);
     }
@@ -214,6 +232,21 @@ export function renderTranscript(container, state, handlers) {
   const activeContextCount = turns
     .filter((turn) => turn.idx <= focusCutoffIdx)
     .reduce((count, turn) => count + getContextLinks(turn).length, 0);
+  const busyTurn = turns.find((turn) => {
+    if (turn.status === "running" || turn.status === "inProgress") {
+      return true;
+    }
+    return getApprovalsForTurn(state, thread.threadId, turn.turnId).some((approval) => approval.status === "pending");
+  }) || null;
+  const busyTurnNeedsApproval = busyTurn
+    ? getApprovalsForTurn(state, thread.threadId, busyTurn.turnId).some((approval) => approval.status === "pending")
+    : false;
+  const composerDisabled = Boolean(busyTurn);
+  const composerDisabledReason = busyTurn
+    ? busyTurnNeedsApproval
+      ? `Waiting for approval on T${busyTurn.idx}`
+      : `Waiting for T${busyTurn.idx} to finish`
+    : "";
 
   if (!turns.length) {
     container.innerHTML = `
@@ -226,10 +259,12 @@ export function renderTranscript(container, state, handlers) {
         </div>
         <section class="transcript-composer">
           <form data-transcript-composer-form="1" class="composer-form">
-            <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
-            <div class="composer-actions">
-              <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
-              <button class="primary-button" type="submit">Send</button>
+            <div class="composer-input-shell">
+              <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
+              <div class="composer-actions">
+                <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
+                <button class="primary-button" type="submit">Send</button>
+              </div>
             </div>
           </form>
         </section>
@@ -300,6 +335,7 @@ export function renderTranscript(container, state, handlers) {
                     </div>
                     ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">+${contextLinks.length}</span>` : ""}
                     ${isImportedEntry ? `<span class="turn-row-link-flag" title="Imported into T${entry.importedIntoTurnIdx}">in T${entry.importedIntoTurnIdx}</span>` : ""}
+                    ${isImportedEntry && entry.mergeMode ? `<span class="turn-row-link-flag" title="${entry.sourceNodeCount || 1} source turn${entry.sourceNodeCount === 1 ? "" : "s"}">${escapeHtml(entry.mergeMode)}</span>` : ""}
                   </div>
                   <div class="turn-row-actions">
                     <span class="turn-row-expand-hint">${isExpanded ? "Hide" : "Open"}</span>
@@ -340,30 +376,36 @@ export function renderTranscript(container, state, handlers) {
       </div>
       <section class="transcript-composer">
         <div class="transcript-composer-intent">
-          ${
+          ${composerDisabledReason || (
             forcedBranchActive && selectedTurn
               ? `Branch from T${selectedTurn.idx}`
               : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
                 ? `Reply from T${selectedTurn.idx} to branch`
                 : `Continue ${escapeHtml(branchLabel)}`
-          }
+          )}
         </div>
         <form data-transcript-composer-form="1" class="composer-form">
-          <textarea
-            data-transcript-composer-input="1"
-            rows="4"
-            placeholder="${escapeHtml(
-              forcedBranchActive && selectedTurn
-                ? `Create a new branch from T${selectedTurn.idx}...`
-                : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
-                  ? `Send from T${selectedTurn.idx} to create a new branch...`
-                  : "Send the next message on this branch...",
-            )}"
-          ></textarea>
-          <div class="composer-actions">
-            <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
-            <button class="primary-button" type="submit">Send</button>
+          <div class="composer-input-shell">
+            <textarea
+              data-transcript-composer-input="1"
+              rows="4"
+              ${composerDisabled ? "disabled" : ""}
+              placeholder="${escapeHtml(
+                composerDisabled
+                  ? composerDisabledReason
+                  : forcedBranchActive && selectedTurn
+                    ? `Create a new branch from T${selectedTurn.idx}...`
+                    : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
+                      ? `Send from T${selectedTurn.idx} to create a new branch...`
+                      : "Send the next message on this branch...",
+              )}"
+            ></textarea>
+            <div class="composer-actions">
+              <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
+              <button class="primary-button" type="submit" ${composerDisabled ? "disabled" : ""}>Send</button>
+            </div>
           </div>
+          ${composerDisabled && !busyTurnNeedsApproval ? '<div class="composer-stop-row"><button data-interrupt-turn-button="1" class="ghost-button" type="button">Stop</button></div>' : ""}
         </form>
       </section>
     </section>
@@ -405,9 +447,15 @@ export function renderTranscript(container, state, handlers) {
   container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
     handlers.onDeleteConversation(selectedNode?.conversationId || thread.threadId);
   });
+  container.querySelector("[data-interrupt-turn-button]")?.addEventListener("click", async () => {
+    await handlers.onInterrupt(thread.threadId);
+  });
 
   container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (composerDisabled) {
+      return;
+    }
     const input = container.querySelector("[data-transcript-composer-input]");
     const text = input?.value?.trim() || "";
     if (!text) {

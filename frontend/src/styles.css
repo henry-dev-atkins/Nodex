@@ -821,37 +821,65 @@ body.is-resizing * {
 }
 
 .graph-primary-edge,
-.graph-context-edge,
+.graph-transform-edge,
 .graph-link-preview {
   fill: none;
+  color: #c1beb6;
+  stroke: currentColor;
   stroke-linecap: round;
   pointer-events: none;
 }
 
 .graph-primary-edge {
-  stroke: #c1beb6;
   stroke-width: 1.5;
 }
 
 .graph-primary-edge.is-branch-edge {
-  stroke: #a6a39b;
+  color: #a6a39b;
 }
 
-.graph-context-edge {
-  stroke: var(--accent);
+.graph-primary-edge.is-active {
+  color: #6e7ea5;
+}
+
+.graph-transform-edge {
+  color: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 6 5;
   opacity: 0.5;
 }
 
-.graph-context-edge.is-active {
+.graph-transform-edge.is-active {
   opacity: 1;
 }
 
 .graph-link-preview {
-  stroke: var(--accent);
+  color: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 6 5;
+}
+
+.graph-merge-node {
+  pointer-events: none;
+}
+
+.graph-merge-diamond {
+  fill: #fbfaf6;
+  stroke: #b7b1a4;
+  stroke-width: 1.2;
+}
+
+.graph-merge-node.is-active .graph-merge-diamond {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+
+.graph-merge-label {
+  fill: var(--text);
+  font-size: 8.5px;
+  font-weight: 700;
+  text-anchor: middle;
+  text-transform: lowercase;
 }
 
 .graph-node {
@@ -874,8 +902,7 @@ body.is-resizing * {
   fill: #fcfbf8;
 }
 
-.graph-node.is-context-source .graph-node-box,
-.graph-node.is-context-destination .graph-node-box {
+.graph-node.is-context-source .graph-node-box {
   stroke: #91a2ca;
 }
 
@@ -1248,6 +1275,10 @@ body.is-resizing * {
   gap: 8px;
 }
 
+.composer-input-shell {
+  position: relative;
+}
+
 .composer-form textarea,
 .modal textarea {
   width: 100%;
@@ -1260,6 +1291,17 @@ body.is-resizing * {
   resize: vertical;
 }
 
+.composer-form textarea {
+  padding-right: 132px;
+  padding-bottom: 40px;
+}
+
+.composer-form textarea:disabled {
+  background: #f1efea;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .composer-actions,
 .modal-actions,
 .modal-header {
@@ -1267,6 +1309,26 @@ body.is-resizing * {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.composer-actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  justify-content: flex-end;
+  z-index: 1;
+}
+
+.composer-actions .primary-button,
+.composer-actions .danger-button {
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: 0.76rem;
+}
+
+.composer-stop-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .modal-backdrop {
@@ -1287,6 +1349,10 @@ body.is-resizing * {
   padding: 16px;
   border: 1px solid var(--line);
   background: var(--surface);
+}
+
+.modal.modal-compact {
+  width: min(520px, 100%);
 }
 
 .modal h3 {
@@ -1328,6 +1394,48 @@ body.is-resizing * {
   padding: 12px 0;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.merge-mode-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+
+.merge-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.merge-mode-card {
+  display: flex;
+  min-height: 82px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-subtle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.merge-mode-card:hover {
+  border-color: var(--line-strong);
+  background: #fbfaf6;
+}
+
+.merge-mode-card strong {
+  font-size: 0.84rem;
+}
+
+.merge-mode-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .context-preview-meta {
@@ -1443,7 +1551,6 @@ body.is-resizing * {
 
   .topbar,
   .action-bar,
-  .composer-actions,
   .modal-actions,
   .modal-header,
   .context-panel-header,
@@ -1465,5 +1572,13 @@ body.is-resizing * {
   .transcript-panel-focus .transcript-view {
     width: 100%;
     border: 0;
+  }
+
+  .composer-input-shell .composer-actions {
+    right: 6px;
+    bottom: 6px;
+    gap: 6px;
+    flex-direction: row;
+    align-items: center;
   }
 }

@@ -20,6 +20,16 @@ function ensureContextMenuRoot() {
   return root;
 }
 
+function ensureMergeModePickerRoot() {
+  let root = document.querySelector("#merge-mode-picker-root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "merge-mode-picker-root";
+    document.body.append(root);
+  }
+  return root;
+}
+
 export function renderAppShell(container) {
   container.innerHTML = `
     <aside class="sidebar">
@@ -90,6 +100,7 @@ export function renderAppShell(container) {
     contextPanel: container.querySelector("#context-panel"),
     focusTranscript: container.querySelector("#focus-transcript-view"),
     importModal: ensureImportModalRoot(),
+    mergeModePicker: ensureMergeModePickerRoot(),
     contextMenu: ensureContextMenuRoot(),
     title: container.querySelector("#thread-title"),
     turnLabel: container.querySelector("#thread-turn-label"),

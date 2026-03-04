@@ -113,7 +113,7 @@ def test_build_transfer_blob_uses_source_thread_turn() -> None:
             {"item": {"type": "agentMessage", "text": "source answer"}},
         )
 
-        blob = manager._build_transfer_blob("source", ["turn-shared"])
+        blob = manager._build_transfer_blob("source", "turn-shared")
 
         assert "source prompt" in blob
         assert "source answer" in blob
@@ -171,7 +171,7 @@ def test_commit_import_preview_links_source_turns_on_destination_turn() -> None:
             )
         )
 
-        preview = asyncio.run(manager.create_import_preview("source", ["turn-source-1", "turn-source-2"], "dest"))
+        preview = asyncio.run(manager.create_import_preview("source", "turn-source-2", "dest", merge_mode="summary"))
 
         async def fake_start_turn(thread_id: str, text: str) -> TurnRecord:
             turn = TurnRecord(
@@ -196,18 +196,17 @@ def test_commit_import_preview_links_source_turns_on_destination_turn() -> None:
         assert turn.metadata["contextLinks"] == [
             {
                 "kind": "contextImport",
-                "sourceThreadId": "source",
-                "sourceTurnId": "turn-source-1",
-                "previewId": preview.previewId,
-                "linkedAt": turn.metadata["contextLinks"][0]["linkedAt"],
-            },
-            {
-                "kind": "contextImport",
+                "mergeMode": "summary",
                 "sourceThreadId": "source",
                 "sourceTurnId": "turn-source-2",
+                "sourceAnchorTurnId": "turn-source-2",
+                "sourceNodes": [
+                    {"threadId": "source", "turnId": "turn-source-1"},
+                    {"threadId": "source", "turnId": "turn-source-2"},
+                ],
                 "previewId": preview.previewId,
-                "linkedAt": turn.metadata["contextLinks"][1]["linkedAt"],
-            },
+                "linkedAt": turn.metadata["contextLinks"][0]["linkedAt"],
+            }
         ]
     finally:
         db.close()
@@ -254,9 +253,7 @@ def test_commit_import_preview_can_create_child_branch_from_destination_turn() -
             )
         )
 
-        preview = asyncio.run(
-            manager.create_import_preview("source", ["turn-source-1"], "dest", dest_turn_id="turn-dest-2")
-        )
+        preview = asyncio.run(manager.create_import_preview("source", "turn-source-1", "dest", dest_turn_id="turn-dest-2"))
 
         async def fake_branch_from_turn(thread_id: str, turn_id: str, title: str | None = None) -> ThreadRecord:
             assert thread_id == "dest"
@@ -296,8 +293,11 @@ def test_commit_import_preview_can_create_child_branch_from_destination_turn() -
         assert turn.metadata["contextLinks"] == [
             {
                 "kind": "contextImport",
+                "mergeMode": "verbose",
                 "sourceThreadId": "source",
                 "sourceTurnId": "turn-source-1",
+                "sourceAnchorTurnId": "turn-source-1",
+                "sourceNodes": [{"threadId": "source", "turnId": "turn-source-1"}],
                 "previewId": preview.previewId,
                 "linkedAt": turn.metadata["contextLinks"][0]["linkedAt"],
             }
@@ -336,9 +336,7 @@ def test_commit_import_preview_continues_existing_head_thread() -> None:
                 startedAt=now,
             )
         )
-        preview = asyncio.run(
-            manager.create_import_preview("source", ["turn-source-1"], "dest", dest_turn_id="turn-dest-6")
-        )
+        preview = asyncio.run(manager.create_import_preview("source", "turn-source-1", "dest", dest_turn_id="turn-dest-6"))
 
         async def fake_start_turn(thread_id: str, text: str) -> TurnRecord:
             turn = TurnRecord(
@@ -407,6 +405,46 @@ def test_sync_thread_snapshot_preserves_existing_turn_context_links() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
+def test_create_import_preview_resolves_full_branch_scope_and_mode() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_thread(
+            ThreadRecord(
+                threadId="child",
+                title="Child",
+                createdAt=now,
+                updatedAt=now,
+                parentThreadId="root",
+                forkedFromTurnId="turn-root-1",
+            )
+        )
+        db.upsert_turn(TurnRecord(turnId="turn-root-1", threadId="root", idx=1, userText="root prompt", status="completed", startedAt=now))
+        db.upsert_turn(TurnRecord(turnId="turn-child-1", threadId="child", idx=1, userText="child prompt", status="completed", startedAt=now))
+        db.upsert_thread(ThreadRecord(threadId="dest", title="Dest", createdAt=now, updatedAt=now))
+
+        async def fake_preview(_prompt: str) -> str:
+            return "Condensed analysis preview."
+
+        manager._run_temporary_preview_prompt = fake_preview  # type: ignore[method-assign]
+        preview = asyncio.run(manager.create_import_preview("child", "turn-child-1", "dest", merge_mode="analysis"))
+
+        assert preview.mergeMode == "analysis"
+        assert preview.sourceAnchorTurnId == "turn-child-1"
+        assert preview.sourceNodes == [
+            {"threadId": "root", "turnId": "turn-root-1"},
+            {"threadId": "child", "turnId": "turn-child-1"},
+        ]
+        assert preview.transferBlob == "Condensed analysis preview."
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def test_response_history_omits_null_local_shell_action_fields() -> None:
     temp_root = make_temp_root()
     settings = make_settings(temp_root)
@@ -438,6 +476,144 @@ def test_response_history_omits_null_local_shell_action_fields() -> None:
                 },
             }
         ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_response_history_sanitizes_nested_local_shell_action_fields() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        history = manager._response_items_from_thread_items(
+            [
+                {
+                    "type": "local_shell_call",
+                    "call_id": "call-1",
+                    "status": "completed",
+                    "action": {
+                        "type": "exec",
+                        "command": ["python", "-V"],
+                        "working_directory": "C:/repo",
+                        "env": None,
+                        "user": None,
+                    },
+                }
+            ]
+        )
+
+        assert history == [
+            {
+                "type": "local_shell_call",
+                "call_id": "call-1",
+                "status": "completed",
+                "action": {
+                    "type": "exec",
+                    "command": ["python", "-V"],
+                    "working_directory": "C:/repo",
+                },
+            }
+        ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_build_response_history_omits_tool_items_by_default() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        history = manager._build_response_history(
+            {
+                "turns": [
+                    {
+                        "id": "turn-1",
+                        "items": [
+                            {
+                                "type": "userMessage",
+                                "content": [{"type": "text", "text": "hello"}],
+                            },
+                            {
+                                "type": "commandExecution",
+                                "id": "cmd-1",
+                                "status": "completed",
+                                "command": "python -V",
+                                "cwd": "C:/repo",
+                            },
+                            {
+                                "type": "agentMessage",
+                                "text": "world",
+                            },
+                        ],
+                    }
+                ]
+            },
+            "turn-1",
+        )
+
+        assert history == [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "world"}],
+            },
+        ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_turn_completed_persists_items_from_events() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="thread-1", title="t", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="thread-1",
+                idx=1,
+                userText="prompt",
+                status="completed",
+                startedAt=now,
+                completedAt=now,
+                metadata={},
+            )
+        )
+        db.append_event(
+            "thread-1",
+            "turn-1",
+            1,
+            "item/completed",
+            {"item": {"id": "itm-user", "type": "userMessage", "content": [{"type": "text", "text": "prompt"}]}},
+        )
+        db.append_event(
+            "thread-1",
+            "turn-1",
+            2,
+            "item/completed",
+            {"item": {"id": "itm-assistant", "type": "agentMessage", "text": "answer"}},
+        )
+        turn = db.get_turn("thread-1", "turn-1")
+        assert turn is not None
+        assert turn.metadata.get("items") in (None, [])
+
+        persisted = manager._persist_turn_items_from_events(turn)
+        item_types = [item.get("type") for item in persisted.metadata.get("items", [])]
+
+        assert item_types == ["userMessage", "agentMessage"]
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)

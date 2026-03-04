@@ -5,6 +5,7 @@ import { renderComparePanel } from "./components/ComparePanel.js";
 import { renderContextPanel } from "./components/ContextPanel.js";
 import { renderGraphView } from "./components/GraphView.js";
 import { renderImportPreviewModal } from "./components/ImportPreviewModal.js";
+import { renderMergeModePickerModal } from "./components/MergeModePickerModal.js";
 import { renderThreadList } from "./components/ThreadList.js";
 import { renderTranscript } from "./components/Transcript.js";
 import { createLayoutController } from "./layout.js";
@@ -165,6 +166,13 @@ function renderTranscriptInto(container, state) {
     async onSubmit(node, text) {
       try {
         await uiActions.submitFromNode(node, text);
+      } catch (error) {
+        store.setErrorMessage(error.message);
+      }
+    },
+    async onInterrupt(threadId) {
+      try {
+        await uiActions.interruptThread(threadId);
       } catch (error) {
         store.setErrorMessage(error.message);
       }
@@ -356,7 +364,7 @@ function renderViews(state) {
     },
     onCreateLink({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId }) {
       store.clearPendingMerge();
-      uiActions.openLinkedChildModal({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId });
+      uiActions.openMergeModePicker({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId });
     },
     onLaneOrderChange() {
       render();
@@ -367,12 +375,45 @@ function renderViews(state) {
     onClose() {
       store.closeImportModal();
     },
+    async onSelectMode(mergeMode) {
+      try {
+        await uiActions.requestImportPreview({
+          sourceThreadId: state.importModal.sourceThreadId,
+          sourceTurnId: state.importModal.sourceAnchorTurnId,
+          targetThreadId: state.importModal.targetThreadId,
+          targetTurnId: state.importModal.targetTurnId,
+          mergeMode,
+        });
+      } catch (error) {
+        store.setImportModalState({ error: error.message });
+      }
+    },
     async onCommit(editedTransferBlob) {
       try {
         await uiActions.commitImport(editedTransferBlob);
       } catch (error) {
         store.setImportModalState({ error: error.message });
       }
+    },
+  });
+  renderMergeModePickerModal(elements.mergeModePicker, state, {
+    onClose() {
+      store.closeMergeModePicker();
+    },
+    onSelectMode(mode) {
+      const picker = state.mergeModePicker;
+      if (!picker.sourceThreadId || !picker.sourceTurnId || !picker.targetThreadId || !picker.targetTurnId) {
+        store.closeMergeModePicker();
+        return;
+      }
+      store.closeMergeModePicker();
+      uiActions.openLinkedChildModal({
+        sourceThreadId: picker.sourceThreadId,
+        sourceTurnId: picker.sourceTurnId,
+        targetThreadId: picker.targetThreadId,
+        targetTurnId: picker.targetTurnId,
+        mergeMode: mode,
+      });
     },
   });
 }

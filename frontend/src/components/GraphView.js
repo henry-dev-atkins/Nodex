@@ -1,10 +1,26 @@
 import { describeDecision, escapeHtml, summarizeText } from "../rendering.js";
-import { getApprovalsForTurn, getBranchLabel, getConversationChildrenMap, getConversationThreads, getNodeId, getSelectedConversation, getSelectedNode, getTurns } from "../selectors.js";
+import {
+  getActiveContextGraph,
+  getApprovalsForTurn,
+  getBranchLabel,
+  getContextLinkAnchor,
+  getContextLinkKey,
+  getContextLinkMode,
+  getContextLinks,
+  getConversationChildrenMap,
+  getConversationThreads,
+  getNodeId,
+  getSelectedConversation,
+  getSelectedNode,
+  getTurns,
+} from "../selectors.js";
 
 const LANE_ORDER_STORAGE_KEY = "codex-ui-graph-lane-order-v1";
 const laneOrderByConversation = new Map();
 const NODE_WIDTH = 196;
 const NODE_HEIGHT = 56;
+const MERGE_NODE_WIDTH = 92;
+const MERGE_NODE_HEIGHT = 44;
 
 function loadLaneOrders() {
   if (laneOrderByConversation.size || typeof window === "undefined") {
@@ -89,29 +105,6 @@ function buildDepthMap(state, threads, childrenMap, rootId) {
   return baseDepth;
 }
 
-function getContextLinks(turn) {
-  const links = turn?.metadata?.contextLinks;
-  return Array.isArray(links) ? links.filter((link) => link?.sourceThreadId && link?.sourceTurnId) : [];
-}
-
-function collectLineageNodeIds(state, threadId, cutoffTurnId = null, into = new Set()) {
-  const thread = state.threads[threadId];
-  if (!thread) {
-    return into;
-  }
-  if (thread.parentThreadId) {
-    collectLineageNodeIds(state, thread.parentThreadId, thread.forkedFromTurnId, into);
-  }
-  const turns = getTurns(state, threadId);
-  const cutoffIdx = cutoffTurnId ? turns.find((turn) => turn.turnId === cutoffTurnId)?.idx ?? turns.length : turns[turns.length - 1]?.idx ?? 0;
-  for (const turn of turns) {
-    if (turn.idx <= cutoffIdx) {
-      into.add(getNodeId(threadId, turn.turnId));
-    }
-  }
-  return into;
-}
-
 function getBranchSummary(state, threadId) {
   const turns = getTurns(state, threadId);
   const firstTurn = turns[0];
@@ -121,39 +114,11 @@ function getBranchSummary(state, threadId) {
   return turns.length ? "Branch in progress" : "No turns yet";
 }
 
-function buildActiveContextState(state) {
-  const selectedNode = getSelectedNode(state);
-  const thread = selectedNode?.thread;
-  if (!thread) {
-    return { sourceNodeIds: new Set(), destinationNodeIds: new Set(), lineageNodeIds: new Set() };
-  }
-  const turns = getTurns(state, thread.threadId);
-  const cutoffIdx = selectedNode?.turn?.idx || turns[turns.length - 1]?.idx || 0;
-  const sourceNodeIds = new Set();
-  const destinationNodeIds = new Set();
-  for (const turn of turns) {
-    if (turn.idx > cutoffIdx) {
-      continue;
-    }
-    const destinationNodeId = getNodeId(thread.threadId, turn.turnId);
-    for (const link of getContextLinks(turn)) {
-      sourceNodeIds.add(getNodeId(link.sourceThreadId, link.sourceTurnId));
-      destinationNodeIds.add(destinationNodeId);
-    }
-  }
-  const lineageNodeIds = collectLineageNodeIds(
-    state,
-    thread.threadId,
-    selectedNode?.turn?.turnId || turns[turns.length - 1]?.turnId || null,
-  );
-  return { sourceNodeIds, destinationNodeIds, lineageNodeIds };
-}
-
 function edgePath(from, to) {
   const fromX = from.x;
-  const fromY = from.y + NODE_HEIGHT / 2;
+  const fromY = from.y;
   const toX = to.x;
-  const toY = to.y - NODE_HEIGHT / 2;
+  const toY = to.y;
   const midY = (fromY + toY) / 2;
   return `M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}`;
 }
@@ -189,10 +154,10 @@ function getGraphBounds(nodes) {
       maxY: NODE_HEIGHT,
     };
   }
-  const minNodeX = Math.min(...nodes.map((node) => node.x - NODE_WIDTH / 2));
-  const maxNodeX = Math.max(...nodes.map((node) => node.x + NODE_WIDTH / 2));
-  const minNodeY = Math.min(...nodes.map((node) => node.y - NODE_HEIGHT / 2));
-  const maxNodeY = Math.max(...nodes.map((node) => node.y + NODE_HEIGHT / 2));
+  const minNodeX = Math.min(...nodes.map((node) => node.x - (node.width || NODE_WIDTH) / 2));
+  const maxNodeX = Math.max(...nodes.map((node) => node.x + (node.width || NODE_WIDTH) / 2));
+  const minNodeY = Math.min(...nodes.map((node) => node.y - (node.height || NODE_HEIGHT) / 2));
+  const maxNodeY = Math.max(...nodes.map((node) => node.y + (node.height || NODE_HEIGHT) / 2));
   return {
     minX: minNodeX - 32,
     maxX: maxNodeX + 32,
@@ -222,7 +187,7 @@ export function renderGraphView(container, state, handlers) {
   const { laneByThread, laneCount } = buildLaneMap(laneOrder);
   const baseDepth = buildDepthMap(state, threads, childrenMap, conversation.threadId);
   const selectedNode = getSelectedNode(state);
-  const activeContext = buildActiveContextState(state);
+  const activeContext = getActiveContextGraph(state);
   const pendingMergeNodeId = state.pendingMergeSourceNodeId;
   const laneGap = 244;
   const rowGap = 88;
@@ -230,7 +195,8 @@ export function renderGraphView(container, state, handlers) {
   const topPadding = 56;
   const nodes = [];
   const primaryEdges = [];
-  const contextEdges = [];
+  const transformEdges = [];
+  const mergeNodes = [];
   const nodeMap = {};
   const firstNodeByThread = {};
   const laneLabelRows = [];
@@ -306,31 +272,48 @@ export function renderGraphView(container, state, handlers) {
     }
   }
 
-  const seenContextEdges = new Set();
   for (const thread of threads) {
     for (const turn of getTurns(state, thread.threadId)) {
       const destinationNode = nodeMap[getNodeId(thread.threadId, turn.turnId)];
       if (!destinationNode) {
         continue;
       }
-      for (const link of getContextLinks(turn)) {
-        const sourceNodeId = getNodeId(link.sourceThreadId, link.sourceTurnId);
-        const destinationNodeId = destinationNode.id;
-        const edgeKey = `${sourceNodeId}:${destinationNodeId}`;
-        if (seenContextEdges.has(edgeKey) || !nodeMap[sourceNodeId]) {
+      const links = getContextLinks(turn);
+      for (const [index, link] of links.entries()) {
+        const anchor = getContextLinkAnchor(link);
+        if (!anchor) {
           continue;
         }
-        seenContextEdges.add(edgeKey);
-        contextEdges.push({
-          from: nodeMap[sourceNodeId],
+        const sourceNode = nodeMap[getNodeId(anchor.threadId, anchor.turnId)];
+        if (!sourceNode) {
+          continue;
+        }
+        const linkKey = getContextLinkKey(link, thread.threadId, turn.turnId, index);
+        const mergeNode = {
+          id: `merge:${linkKey}`,
+          x: (sourceNode.x + destinationNode.x) / 2,
+          y: destinationNode.y - 54 - index * 34,
+          width: MERGE_NODE_WIDTH,
+          height: MERGE_NODE_HEIGHT,
+          mode: getContextLinkMode(link),
+          active: activeContext.activeImportLinkKeys.has(linkKey),
+        };
+        mergeNodes.push(mergeNode);
+        transformEdges.push({
+          from: sourceNode,
+          to: mergeNode,
+          active: mergeNode.active,
+        });
+        transformEdges.push({
+          from: mergeNode,
           to: destinationNode,
-          active: activeContext.sourceNodeIds.has(sourceNodeId) && activeContext.destinationNodeIds.has(destinationNodeId),
+          active: mergeNode.active,
         });
       }
     }
   }
 
-  const graphBounds = getGraphBounds(nodes);
+  const graphBounds = getGraphBounds([...nodes, ...mergeNodes]);
   const paddingX = 52;
   const paddingY = 40;
   const offsetX = paddingX - graphBounds.minX;
@@ -341,6 +324,10 @@ export function renderGraphView(container, state, handlers) {
   });
   laneLabelRows.forEach((row) => {
     row.x += offsetX;
+  });
+  mergeNodes.forEach((node) => {
+    node.x += offsetX;
+    node.y += offsetY;
   });
   const laneOriginX = leftPadding + offsetX;
   const width = Math.max(720, Math.ceil(graphBounds.maxX - graphBounds.minX + paddingX * 2));
@@ -357,6 +344,11 @@ export function renderGraphView(container, state, handlers) {
       <div class="graph-stage" data-graph-stage>
         <div class="graph-canvas" data-graph-canvas style="width:${width}px;height:${height}px">
           <svg class="graph-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+            <defs>
+              <marker id="graph-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M 0 0 L 8 4 L 0 8 z" fill="currentColor" />
+              </marker>
+            </defs>
             <rect class="graph-canvas-fill" x="0" y="0" width="${width}" height="${height}" />
             ${laneLabelRows
               .map(
@@ -369,19 +361,34 @@ export function renderGraphView(container, state, handlers) {
               .join("")}
             ${primaryEdges
               .map(
-                (edge) => `<path class="graph-primary-edge${edge.branch ? " is-branch-edge" : ""}" d="${edgePath(edge.from, edge.to)}" />`,
+                (edge) => `<path class="graph-primary-edge${edge.branch ? " is-branch-edge" : ""} ${activeContext.activeNodeIds.has(edge.from.id) && activeContext.activeNodeIds.has(edge.to.id) ? "is-active" : ""}" d="${edgePath(edge.from, edge.to)}" marker-end="url(#graph-arrow)" />`,
               )
               .join("")}
-            ${contextEdges
+            ${transformEdges
               .map(
-                (edge) => `<path class="graph-context-edge${edge.active ? " is-active" : ""}" d="${edgePath(edge.from, edge.to)}" />`,
+                (edge) => `<path class="graph-transform-edge${edge.active ? " is-active" : ""}" d="${edgePath(edge.from, edge.to)}" marker-end="url(#graph-arrow)" />`,
               )
               .join("")}
             <path class="graph-link-preview" data-link-preview style="display:none" />
+            ${mergeNodes
+              .map((node) => {
+                const points = [
+                  `${node.x},${node.y - MERGE_NODE_HEIGHT / 2}`,
+                  `${node.x + MERGE_NODE_WIDTH / 2},${node.y}`,
+                  `${node.x},${node.y + MERGE_NODE_HEIGHT / 2}`,
+                  `${node.x - MERGE_NODE_WIDTH / 2},${node.y}`,
+                ].join(" ");
+                return `
+                  <g class="graph-merge-node ${node.active ? "is-active" : ""}" data-merge-node-id="${node.id}">
+                    <polygon class="graph-merge-diamond" points="${points}" />
+                    <text class="graph-merge-label" x="${node.x}" y="${node.y + 4}">${escapeHtml(node.mode)}</text>
+                  </g>
+                `;
+              })
+              .join("")}
             ${nodes
               .map((node) => {
-                const activeContextSource = activeContext.sourceNodeIds.has(node.id);
-                const activeContextDestination = activeContext.destinationNodeIds.has(node.id);
+                const activeContextSource = activeContext.importNodeIds.has(node.id);
                 const isLineageNode = activeContext.lineageNodeIds.has(node.id);
                 const classes = [
                   "graph-node",
@@ -392,7 +399,6 @@ export function renderGraphView(container, state, handlers) {
                   pendingMergeNodeId === node.id ? "is-merge-source" : "",
                   isLineageNode ? "is-lineage-node" : "",
                   activeContextSource ? "is-context-source" : "",
-                  activeContextDestination ? "is-context-destination" : "",
                 ]
                   .filter(Boolean)
                   .join(" ");

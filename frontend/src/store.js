@@ -33,6 +33,13 @@ function ensureSelection(state) {
       leftNodeId: null,
       rightNodeId: null,
     };
+    state.mergeModePicker = {
+      open: false,
+      sourceThreadId: null,
+      sourceTurnId: null,
+      targetThreadId: null,
+      targetTurnId: null,
+    };
     return;
   }
 
@@ -77,19 +84,24 @@ function ensureSelection(state) {
 }
 
 function ensureModalState(state) {
-  const { sourceThreadId, targetThreadId, targetTurnId } = state.importModal;
+  const { sourceThreadId, sourceAnchorTurnId, targetThreadId, targetTurnId } = state.importModal;
   if (sourceThreadId && !state.threads[sourceThreadId]) {
     state.importModal = {
       open: false,
       preview: null,
       sourceThreadId: null,
-      sourceTurnIds: [],
+      sourceAnchorTurnId: null,
       targetThreadId: null,
       targetTurnId: null,
+      mergeMode: "verbose",
       loading: false,
       error: "",
     };
     return;
+  }
+  if (sourceThreadId && sourceAnchorTurnId && !getTurns(state, sourceThreadId).some((turn) => turn.turnId === sourceAnchorTurnId)) {
+    state.importModal.sourceAnchorTurnId = null;
+    state.importModal.preview = null;
   }
   if (targetThreadId && !state.threads[targetThreadId]) {
     state.importModal.targetThreadId = null;
@@ -99,6 +111,52 @@ function ensureModalState(state) {
   if (targetThreadId && targetTurnId && !getTurns(state, targetThreadId).some((turn) => turn.turnId === targetTurnId)) {
     state.importModal.targetTurnId = null;
     state.importModal.preview = null;
+  }
+}
+
+function ensureMergePickerState(state) {
+  const picker = state.mergeModePicker;
+  if (!picker.open) {
+    return;
+  }
+  if (!picker.sourceThreadId || !picker.sourceTurnId || !picker.targetThreadId || !picker.targetTurnId) {
+    state.mergeModePicker = {
+      open: false,
+      sourceThreadId: null,
+      sourceTurnId: null,
+      targetThreadId: null,
+      targetTurnId: null,
+    };
+    return;
+  }
+  if (!state.threads[picker.sourceThreadId] || !state.threads[picker.targetThreadId]) {
+    state.mergeModePicker = {
+      open: false,
+      sourceThreadId: null,
+      sourceTurnId: null,
+      targetThreadId: null,
+      targetTurnId: null,
+    };
+    return;
+  }
+  if (!getTurns(state, picker.sourceThreadId).some((turn) => turn.turnId === picker.sourceTurnId)) {
+    state.mergeModePicker = {
+      open: false,
+      sourceThreadId: null,
+      sourceTurnId: null,
+      targetThreadId: null,
+      targetTurnId: null,
+    };
+    return;
+  }
+  if (!getTurns(state, picker.targetThreadId).some((turn) => turn.turnId === picker.targetTurnId)) {
+    state.mergeModePicker = {
+      open: false,
+      sourceThreadId: null,
+      sourceTurnId: null,
+      targetThreadId: null,
+      targetTurnId: null,
+    };
   }
 }
 
@@ -123,15 +181,23 @@ export function createStore() {
       leftNodeId: null,
       rightNodeId: null,
     },
+    mergeModePicker: {
+      open: false,
+      sourceThreadId: null,
+      sourceTurnId: null,
+      targetThreadId: null,
+      targetTurnId: null,
+    },
     lastEventId: 0,
     connectionStatus: "connecting",
     importModal: {
       open: false,
       preview: null,
       sourceThreadId: null,
-      sourceTurnIds: [],
+      sourceAnchorTurnId: null,
       targetThreadId: null,
       targetTurnId: null,
+      mergeMode: "verbose",
       loading: false,
       error: "",
     },
@@ -185,6 +251,13 @@ export function createStore() {
         leftNodeId: null,
         rightNodeId: null,
       };
+      state.mergeModePicker = {
+        open: false,
+        sourceThreadId: null,
+        sourceTurnId: null,
+        targetThreadId: null,
+        targetTurnId: null,
+      };
       ensureModalState(state);
       emit();
     },
@@ -197,6 +270,13 @@ export function createStore() {
           open: false,
           leftNodeId: null,
           rightNodeId: null,
+        };
+        state.mergeModePicker = {
+          open: false,
+          sourceThreadId: null,
+          sourceTurnId: null,
+          targetThreadId: null,
+          targetTurnId: null,
         };
       }
       state.selectedConversationId = nextConversationId;
@@ -246,6 +326,26 @@ export function createStore() {
     },
     clearPendingMerge() {
       state.pendingMergeSourceNodeId = null;
+      emit();
+    },
+    openMergeModePicker({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId }) {
+      state.mergeModePicker = {
+        open: true,
+        sourceThreadId,
+        sourceTurnId,
+        targetThreadId,
+        targetTurnId,
+      };
+      emit();
+    },
+    closeMergeModePicker() {
+      state.mergeModePicker = {
+        open: false,
+        sourceThreadId: null,
+        sourceTurnId: null,
+        targetThreadId: null,
+        targetTurnId: null,
+      };
       emit();
     },
     openCompare(nodeId) {
@@ -313,12 +413,14 @@ export function createStore() {
       state.lastEventId = payload.lastEventId ?? 0;
       ensureSelection(state);
       ensureModalState(state);
+      ensureMergePickerState(state);
       emit();
     },
     applyThread(thread) {
       state.threads[thread.threadId] = thread;
       ensureSelection(state);
       ensureModalState(state);
+      ensureMergePickerState(state);
       emit();
     },
     applyTurn(turn) {
@@ -328,6 +430,7 @@ export function createStore() {
       state.turnsByThread[turn.threadId] = sortTurns(next);
       ensureSelection(state);
       ensureModalState(state);
+      ensureMergePickerState(state);
       emit();
     },
     applyTurns(turns) {
@@ -339,6 +442,7 @@ export function createStore() {
       }
       ensureSelection(state);
       ensureModalState(state);
+      ensureMergePickerState(state);
       emit();
     },
     removeThread(threadId) {
@@ -371,14 +475,15 @@ export function createStore() {
         scheduleEventEmit();
       }
     },
-    openImportModal({ sourceThreadId, sourceTurnIds = [], targetThreadId = null, targetTurnId = null }) {
+    openImportModal({ sourceThreadId, sourceAnchorTurnId = null, targetThreadId = null, targetTurnId = null, mergeMode = "verbose" }) {
       state.importModal = {
         open: true,
         preview: null,
         sourceThreadId,
-        sourceTurnIds,
+        sourceAnchorTurnId,
         targetThreadId,
         targetTurnId,
+        mergeMode,
         loading: false,
         error: "",
       };
@@ -389,9 +494,10 @@ export function createStore() {
         open: false,
         preview: null,
         sourceThreadId: null,
-        sourceTurnIds: [],
+        sourceAnchorTurnId: null,
         targetThreadId: null,
         targetTurnId: null,
+        mergeMode: "verbose",
         loading: false,
         error: "",
       };

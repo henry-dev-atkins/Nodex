@@ -84,7 +84,10 @@ class Database:
                     dest_thread_id TEXT NOT NULL,
                     dest_turn_id TEXT,
                     source_thread_id TEXT NOT NULL,
+                    source_anchor_turn_id TEXT,
                     source_turn_ids_json TEXT NOT NULL,
+                    source_nodes_json TEXT,
+                    merge_mode TEXT,
                     suspected_secrets_json TEXT NOT NULL,
                     transfer_blob TEXT NOT NULL,
                     expires_at TEXT NOT NULL
@@ -137,6 +140,12 @@ class Database:
         columns = {row["name"] for row in rows}
         if "dest_turn_id" not in columns:
             self._conn.execute("ALTER TABLE import_previews ADD COLUMN dest_turn_id TEXT")
+        if "source_anchor_turn_id" not in columns:
+            self._conn.execute("ALTER TABLE import_previews ADD COLUMN source_anchor_turn_id TEXT")
+        if "source_nodes_json" not in columns:
+            self._conn.execute("ALTER TABLE import_previews ADD COLUMN source_nodes_json TEXT")
+        if "merge_mode" not in columns:
+            self._conn.execute("ALTER TABLE import_previews ADD COLUMN merge_mode TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -392,19 +401,25 @@ class Database:
                     dest_thread_id,
                     dest_turn_id,
                     source_thread_id,
+                    source_anchor_turn_id,
                     source_turn_ids_json,
+                    source_nodes_json,
+                    merge_mode,
                     suspected_secrets_json,
                     transfer_blob,
                     expires_at
                 )
-                VALUES(?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     preview.previewId,
                     preview.destThreadId,
                     preview.destTurnId,
                     preview.sourceThreadId,
-                    json_dumps(preview.sourceTurnIds),
+                    preview.sourceAnchorTurnId,
+                    json_dumps([node["turnId"] for node in preview.sourceNodes]),
+                    json_dumps(preview.sourceNodes),
+                    preview.mergeMode,
                     json_dumps(preview.suspectedSecrets),
                     preview.transferBlob,
                     preview.expiresAt,
@@ -417,12 +432,25 @@ class Database:
             row = self._conn.execute("SELECT * FROM import_previews WHERE preview_id = ?", (preview_id,)).fetchone()
         if not row:
             return None
+        source_nodes = _json_loads(row["source_nodes_json"], None)
+        if not source_nodes:
+            source_turn_ids = _json_loads(row["source_turn_ids_json"], [])
+            source_nodes = [
+                {"threadId": row["source_thread_id"], "turnId": str(turn_id)}
+                for turn_id in source_turn_ids
+                if turn_id
+            ]
+        source_anchor_turn_id = row["source_anchor_turn_id"]
+        if not source_anchor_turn_id:
+            source_anchor_turn_id = source_nodes[-1]["turnId"] if source_nodes else ""
         return ImportPreviewRecord(
             previewId=row["preview_id"],
             destThreadId=row["dest_thread_id"],
             destTurnId=row["dest_turn_id"],
             sourceThreadId=row["source_thread_id"],
-            sourceTurnIds=_json_loads(row["source_turn_ids_json"], []),
+            sourceAnchorTurnId=source_anchor_turn_id,
+            sourceNodes=source_nodes,
+            mergeMode=row["merge_mode"] or "verbose",
             suspectedSecrets=_json_loads(row["suspected_secrets_json"], []),
             transferBlob=row["transfer_blob"],
             expiresAt=row["expires_at"],

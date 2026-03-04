@@ -1,6 +1,13 @@
 import { escapeHtml, threadLabel } from "../rendering.js";
 import { getTurn } from "../selectors.js";
 
+const MODE_OPTIONS = [
+  { value: "verbose", label: "Verbose" },
+  { value: "summary", label: "Summary" },
+  { value: "decision", label: "Decision" },
+  { value: "analysis", label: "Analysis" },
+];
+
 export function renderImportPreviewModal(container, state, handlers) {
   const modal = state.importModal;
   if (!modal.open) {
@@ -12,8 +19,8 @@ export function renderImportPreviewModal(container, state, handlers) {
   const secrets = modal.preview?.suspectedSecrets || [];
   const sourceThread = modal.sourceThreadId ? state.threads[modal.sourceThreadId] : null;
   const targetThread = modal.targetThreadId ? state.threads[modal.targetThreadId] : null;
-  const sourceTurn = modal.sourceThreadId && modal.sourceTurnIds?.[0]
-    ? getTurn(state, modal.sourceThreadId, modal.sourceTurnIds[0])
+  const sourceTurn = modal.sourceThreadId && modal.sourceAnchorTurnId
+    ? getTurn(state, modal.sourceThreadId, modal.sourceAnchorTurnId)
     : null;
   const targetTurn = modal.targetThreadId && modal.targetTurnId ? getTurn(state, modal.targetThreadId, modal.targetTurnId) : null;
 
@@ -22,7 +29,7 @@ export function renderImportPreviewModal(container, state, handlers) {
       <div class="modal">
         <div class="modal-header">
           <div>
-            <h3>Create Child Turn</h3>
+            <h3>Create Merged Child Turn</h3>
             <p class="modal-subtle">${escapeHtml(sourceThread ? threadLabel(sourceThread) : "Unknown source")} to ${escapeHtml(targetThread ? threadLabel(targetThread) : "Unknown target")}</p>
           </div>
           <button id="close-import-modal" class="ghost-button">Close</button>
@@ -37,6 +44,17 @@ export function renderImportPreviewModal(container, state, handlers) {
             <span class="modal-parent-mark">Import</span>
             <span>${sourceTurn ? `T${sourceTurn.idx}` : "Unknown"}</span>
           </div>
+        </div>
+        <div class="merge-mode-toggle">
+          ${MODE_OPTIONS.map((option) => `
+            <button
+              type="button"
+              class="ghost-button ${modal.mergeMode === option.value ? "is-active" : ""}"
+              data-import-merge-mode="${option.value}"
+            >
+              ${escapeHtml(option.label)}
+            </button>
+          `).join("")}
         </div>
 
         ${
@@ -78,6 +96,14 @@ export function renderImportPreviewModal(container, state, handlers) {
 
   container.querySelector("#close-import-modal")?.addEventListener("click", handlers.onClose);
   container.querySelector("#cancel-import")?.addEventListener("click", handlers.onClose);
+  container.querySelectorAll("[data-import-merge-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode = button.dataset.importMergeMode;
+      if (nextMode && nextMode !== modal.mergeMode) {
+        handlers.onSelectMode?.(nextMode);
+      }
+    });
+  });
   container.querySelector("#commit-import")?.addEventListener("click", () => {
     const edited = container.querySelector("#import-preview-text")?.value || "";
     handlers.onCommit(edited);

@@ -3,7 +3,7 @@ const TOKEN = window.__CODEX_UI_TOKEN__;
 async function parseJson(response) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = body?.error?.message || `${response.status} ${response.statusText}`;
+    const message = body?.error?.message || body?.detail?.error?.message || `${response.status} ${response.statusText}`;
     throw new Error(message);
   }
   return body;

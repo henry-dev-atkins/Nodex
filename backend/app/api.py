@@ -69,6 +69,11 @@ def build_api_router(db: Database, manager: CodexManager, require_token):
         turn = await manager.start_turn(thread_id, payload.text)
         return {"turn": turn.model_dump()}
 
+    @router.post("/threads/{thread_id}/interrupt")
+    async def post_interrupt_turn(thread_id: str) -> dict[str, Any]:
+        turn = await manager.interrupt_turn(thread_id)
+        return {"turn": turn.model_dump()}
+
     @router.post("/threads/{thread_id}/fork")
     async def post_fork(thread_id: str, payload: ForkThreadRequest) -> dict[str, Any]:
         thread = await manager.fork_thread(thread_id, title=payload.title)
@@ -103,9 +108,10 @@ def build_api_router(db: Database, manager: CodexManager, require_token):
     async def import_preview(payload: ImportPreviewRequest) -> dict[str, Any]:
         preview = await manager.create_import_preview(
             payload.sourceThreadId,
-            payload.sourceTurnIds,
+            payload.sourceTurnId,
             payload.destThreadId,
             dest_turn_id=payload.destTurnId,
+            merge_mode=payload.mergeMode,
         )
         return preview.model_dump()
 

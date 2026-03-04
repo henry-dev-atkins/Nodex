@@ -24,6 +24,14 @@ export function createUiActions(store) {
     await apiPost(`/api/threads/${node.thread.threadId}/turns`, { text });
   }
 
+  async function interruptThread(threadId) {
+    const response = await apiPost(`/api/threads/${threadId}/interrupt`, {});
+    if (response.turn) {
+      store.applyTurn(response.turn);
+    }
+    return response.turn || null;
+  }
+
   async function deleteConversation(threadId) {
     const response = await apiDelete(`/api/conversations/${threadId}`);
     for (const deletedId of response.deletedThreadIds || []) {
@@ -79,7 +87,7 @@ export function createUiActions(store) {
     return response.thread || null;
   }
 
-  async function requestImportPreview({ sourceThreadId, sourceTurnIds = [], targetThreadId, targetTurnId }) {
+  async function requestImportPreview({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId, mergeMode }) {
     try {
       store.setImportModalState({
         loading: true,
@@ -87,14 +95,16 @@ export function createUiActions(store) {
         targetThreadId,
         targetTurnId,
         sourceThreadId,
-        sourceTurnIds,
+        sourceAnchorTurnId: sourceTurnId,
+        mergeMode,
         preview: null,
       });
       const preview = await apiPost("/api/import/preview", {
         sourceThreadId,
-        sourceTurnIds,
+        sourceTurnId,
         destThreadId: targetThreadId,
         destTurnId: targetTurnId,
+        mergeMode,
       });
       store.setImportModalState({
         loading: false,
@@ -102,23 +112,35 @@ export function createUiActions(store) {
         targetThreadId,
         targetTurnId,
         sourceThreadId,
-        sourceTurnIds,
+        sourceAnchorTurnId: sourceTurnId,
+        mergeMode,
       });
     } catch (error) {
       store.setImportModalState({ loading: false, error: error.message });
     }
   }
 
-  function openLinkedChildModal({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId }) {
+  function openLinkedChildModal({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId, mergeMode }) {
     store.openImportModal({
       sourceThreadId,
-      sourceTurnIds: [sourceTurnId],
+      sourceAnchorTurnId: sourceTurnId,
       targetThreadId,
       targetTurnId,
+      mergeMode,
     });
     void requestImportPreview({
       sourceThreadId,
-      sourceTurnIds: [sourceTurnId],
+      sourceTurnId,
+      targetThreadId,
+      targetTurnId,
+      mergeMode,
+    });
+  }
+
+  function openMergeModePicker({ sourceThreadId, sourceTurnId, targetThreadId, targetTurnId }) {
+    store.openMergeModePicker({
+      sourceThreadId,
+      sourceTurnId,
       targetThreadId,
       targetTurnId,
     });
@@ -133,7 +155,7 @@ export function createUiActions(store) {
     if (pendingSource.threadId === threadId && pendingSource.turnId === turnId) {
       return false;
     }
-    openLinkedChildModal({
+    openMergeModePicker({
       sourceThreadId: pendingSource.threadId,
       sourceTurnId: pendingSource.turnId,
       targetThreadId: threadId,
@@ -176,10 +198,12 @@ export function createUiActions(store) {
     deleteConversation,
     requestImportPreview,
     openLinkedChildModal,
+    openMergeModePicker,
     selectNodeOrMerge,
     submitFromNode,
     commitImport,
     renameThread,
     setHeadFromNode,
+    interruptThread,
   };
 }

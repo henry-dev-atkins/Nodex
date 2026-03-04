@@ -41,6 +41,55 @@ export function getApprovalsForTurn(state, threadId, turnId) {
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
 
+export function getContextLinks(turn) {
+  const links = turn?.metadata?.contextLinks;
+  return Array.isArray(links)
+    ? links.filter((link) => link?.sourceThreadId && (link?.sourceTurnId || link?.sourceAnchorTurnId))
+    : [];
+}
+
+export function getContextLinkMode(link) {
+  return String(link?.mergeMode || "verbose");
+}
+
+export function getContextLinkSourceNodes(link) {
+  if (Array.isArray(link?.sourceNodes) && link.sourceNodes.length) {
+    return link.sourceNodes
+      .filter((node) => node?.threadId && node?.turnId)
+      .map((node) => ({ threadId: String(node.threadId), turnId: String(node.turnId) }));
+  }
+  const turnId = link?.sourceAnchorTurnId || link?.sourceTurnId;
+  if (!link?.sourceThreadId || !turnId) {
+    return [];
+  }
+  return [{ threadId: String(link.sourceThreadId), turnId: String(turnId) }];
+}
+
+export function getContextLinkAnchor(link) {
+  const sourceNodes = getContextLinkSourceNodes(link);
+  return sourceNodes[sourceNodes.length - 1] || null;
+}
+
+export function getContextLinkScopeCount(link) {
+  return getContextLinkSourceNodes(link).length;
+}
+
+export function getContextLinkKey(link, destThreadId = "", destTurnId = "", index = 0) {
+  const anchor = getContextLinkAnchor(link);
+  const previewId = link?.previewId ? String(link.previewId) : "";
+  if (previewId) {
+    return `${destThreadId}:${destTurnId}:${previewId}`;
+  }
+  return [
+    destThreadId,
+    destTurnId,
+    link?.sourceThreadId || "",
+    anchor?.turnId || link?.sourceTurnId || "",
+    getContextLinkMode(link),
+    String(index),
+  ].join(":");
+}
+
 export function getHeadTurn(state, threadId) {
   const turns = getTurns(state, threadId);
   return turns[turns.length - 1] || null;
@@ -175,9 +224,7 @@ export function getNodeSnapshot(state, threadId, turnId = null) {
   const events = turn ? state.eventsByTurn[`${threadId}:${turn.turnId}`] || [] : [];
   const blocks = turn ? buildBlocks(turn, events, approvals) : [];
   const summary = turn ? summarizeTurn(turn, blocks, approvals) : null;
-  const contextLinks = Array.isArray(turn?.metadata?.contextLinks)
-    ? turn.metadata.contextLinks.filter((link) => link?.sourceThreadId && link?.sourceTurnId)
-    : [];
+  const contextLinks = getContextLinks(turn);
   return {
     nodeId: getNodeId(threadId, turn?.turnId || null),
     thread,
@@ -223,23 +270,43 @@ export function getContextStack(state, threadId, turnId = null) {
   const lineageEntries = buildLineageEntries(state, threadId, turnId);
   const seenImports = new Set();
   const importedEntries = [];
-  for (const entry of lineageEntries) {
-    const turnSnapshot = getNodeSnapshot(state, entry.threadId, entry.turnId);
-    for (const link of turnSnapshot?.contextLinks || []) {
-      const nodeId = getNodeId(link.sourceThreadId, link.sourceTurnId);
-      if (seenImports.has(nodeId)) {
-        continue;
-      }
-      seenImports.add(nodeId);
-      importedEntries.push({
-        kind: "import",
-        threadId: link.sourceThreadId,
-        turnId: link.sourceTurnId,
-        nodeId,
-        importedIntoNodeId: entry.nodeId,
-      });
+  const visitedNodes = new Set();
+
+  function collectImportsForTurn(currentThreadId, currentTurnId, importedIntoNodeId) {
+    const nodeId = getNodeId(currentThreadId, currentTurnId);
+    if (visitedNodes.has(nodeId)) {
+      return;
     }
+    visitedNodes.add(nodeId);
+    const snapshot = getNodeSnapshot(state, currentThreadId, currentTurnId);
+    const links = snapshot?.contextLinks || [];
+    links.forEach((link, index) => {
+      const anchor = getContextLinkAnchor(link);
+      if (!anchor) {
+        return;
+      }
+      const linkKey = getContextLinkKey(link, currentThreadId, currentTurnId, index);
+      if (!seenImports.has(linkKey)) {
+        seenImports.add(linkKey);
+        importedEntries.push({
+          kind: "import",
+          threadId: anchor.threadId,
+          turnId: anchor.turnId,
+          nodeId: getNodeId(anchor.threadId, anchor.turnId),
+          importedIntoNodeId,
+          mergeMode: getContextLinkMode(link),
+          sourceNodeCount: getContextLinkScopeCount(link),
+          linkKey,
+        });
+      }
+      getContextLinkSourceNodes(link).forEach((sourceNode) => {
+        collectImportsForTurn(sourceNode.threadId, sourceNode.turnId, importedIntoNodeId);
+      });
+    });
   }
+
+  lineageEntries.forEach((entry) => collectImportsForTurn(entry.threadId, entry.turnId, entry.nodeId));
+
   return [...lineageEntries, ...importedEntries]
     .map((entry) => {
       const entrySnapshot = getNodeSnapshot(state, entry.threadId, entry.turnId);
@@ -252,6 +319,53 @@ export function getContextStack(state, threadId, turnId = null) {
       };
     })
     .filter(Boolean);
+}
+
+export function getActiveContextGraph(state) {
+  const selected = getSelectedNode(state);
+  if (!selected?.thread) {
+    return {
+      lineageNodeIds: new Set(),
+      importNodeIds: new Set(),
+      activeNodeIds: new Set(),
+      activeImportLinkKeys: new Set(),
+    };
+  }
+  const lineageEntries = buildLineageEntries(state, selected.thread.threadId, selected.turn?.turnId || null);
+  const lineageNodeIds = new Set(lineageEntries.map((entry) => entry.nodeId));
+  const importNodeIds = new Set();
+  const activeNodeIds = new Set(lineageEntries.map((entry) => entry.nodeId));
+  const activeImportLinkKeys = new Set();
+  const visitedTurns = new Set();
+
+  function walkTurn(threadId, turnId) {
+    const nodeId = getNodeId(threadId, turnId);
+    if (visitedTurns.has(nodeId)) {
+      return;
+    }
+    visitedTurns.add(nodeId);
+    const turn = getTurn(state, threadId, turnId);
+    if (!turn) {
+      return;
+    }
+    getContextLinks(turn).forEach((link, index) => {
+      activeImportLinkKeys.add(getContextLinkKey(link, threadId, turn.turnId, index));
+      getContextLinkSourceNodes(link).forEach((sourceNode) => {
+        const sourceNodeId = getNodeId(sourceNode.threadId, sourceNode.turnId);
+        importNodeIds.add(sourceNodeId);
+        activeNodeIds.add(sourceNodeId);
+        walkTurn(sourceNode.threadId, sourceNode.turnId);
+      });
+    });
+  }
+
+  lineageEntries.forEach((entry) => walkTurn(entry.threadId, entry.turnId));
+  return {
+    lineageNodeIds,
+    importNodeIds,
+    activeNodeIds,
+    activeImportLinkKeys,
+  };
 }
 
 export function getSelectedContextStack(state) {

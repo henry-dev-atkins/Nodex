@@ -59,7 +59,9 @@ class ImportPreviewRecord(CamelModel):
     destThreadId: str
     destTurnId: str | None = None
     sourceThreadId: str
-    sourceTurnIds: list[str]
+    sourceAnchorTurnId: str
+    sourceNodes: list[dict[str, str]]
+    mergeMode: Literal["verbose", "summary", "decision", "analysis"] = "verbose"
     suspectedSecrets: list[dict[str, Any]]
     transferBlob: str
     expiresAt: str
@@ -93,9 +95,10 @@ class ApprovalDecisionRequest(CamelModel):
 
 class ImportPreviewRequest(CamelModel):
     sourceThreadId: str
-    sourceTurnIds: list[str]
+    sourceTurnId: str
     destThreadId: str
     destTurnId: str | None = None
+    mergeMode: Literal["verbose", "summary", "decision", "analysis"] = "verbose"
 
 
 class ImportCommitRequest(CamelModel):

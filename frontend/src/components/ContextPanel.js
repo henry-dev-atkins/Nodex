@@ -18,9 +18,12 @@ function renderContextGroup(title, entries) {
           .map((entry) => {
             const turn = entry.snapshot.turn;
             const responsePreview = entry.snapshot.summary?.previewShort || "No response yet.";
+            const importMeta = entry.kind === "import" && entry.mergeMode
+              ? ` · ${entry.mergeMode} · ${entry.sourceNodeCount || 1} turn${entry.sourceNodeCount === 1 ? "" : "s"}`
+              : "";
             return `
               <button type="button" class="context-chip ${entry.isSelected ? "is-selected" : ""}" data-context-node="${entry.nodeId}">
-                <span class="context-chip-meta">${escapeHtml(entry.snapshot.branchLabel)} | T${turn.idx}</span>
+                <span class="context-chip-meta">${escapeHtml(entry.snapshot.branchLabel)} | T${turn.idx}${escapeHtml(importMeta)}</span>
                 <span class="context-chip-title">${escapeHtml(entry.snapshot.promptSummary)}</span>
                 <span class="context-chip-preview">${escapeHtml(responsePreview)}</span>
               </button>
