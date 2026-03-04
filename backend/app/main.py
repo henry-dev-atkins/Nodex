@@ -16,6 +16,21 @@ from .util import APP_NAME, APP_VERSION
 from .ws import WebSocketHub
 
 
+def _no_cache_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+
+class NoCacheStaticFiles(StaticFiles):
+    def file_response(self, full_path, stat_result, scope, status_code: int = 200):
+        response = FileResponse(full_path, status_code=status_code, stat_result=stat_result)
+        response.headers.update(_no_cache_headers())
+        return response
+
+
 def _render_index(frontend_dir, token: str) -> str:
     html = (frontend_dir / "index.html").read_text(encoding="utf-8")
     return html.replace("__SESSION_TOKEN__", token).replace("__APP_VERSION__", APP_VERSION)
@@ -42,7 +57,7 @@ def create_app() -> FastAPI:
             db.close()
 
     app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=lifespan)
-    app.mount("/static", StaticFiles(directory=settings.frontend_dir / "src"), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=settings.frontend_dir / "src"), name="static")
     app.include_router(build_api_router(db, manager, require_token))
 
     @app.exception_handler(Exception)
@@ -61,11 +76,11 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
-        return HTMLResponse(_render_index(settings.frontend_dir, token))
+        return HTMLResponse(_render_index(settings.frontend_dir, token), headers=_no_cache_headers())
 
     @app.get("/favicon.ico")
     async def favicon() -> FileResponse:
-        return FileResponse(settings.frontend_dir / "src" / "favicon.svg")
+        return FileResponse(settings.frontend_dir / "src" / "favicon.svg", headers=_no_cache_headers())
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
