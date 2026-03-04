@@ -12,27 +12,20 @@ export function renderAppShell(container) {
   container.innerHTML = `
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="sidebar-brand">
-          <span class="sidebar-eyebrow">Codex UI</span>
-          <h1>Studio</h1>
-        </div>
+        <h1>Workspace</h1>
         <button id="new-thread-button" class="primary-button">New</button>
       </div>
       <div class="sidebar-body">
         <div class="sidebar-section-label">Conversations</div>
         <div id="thread-list" class="thread-list"></div>
       </div>
-      <div class="sidebar-footer">Branch maps, transcript work, and merge trials.</div>
     </aside>
     <div id="sidebar-resizer" class="pane-resizer pane-resizer-vertical" aria-hidden="true"></div>
 
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-mainline">
-          <div class="topbar-copy">
-            <span class="topbar-kicker">Active line</span>
-            <h2 id="thread-title">No conversation</h2>
-          </div>
+          <h2 id="thread-title">No conversation</h2>
           <span id="thread-turn-label" class="topbar-turn">Start</span>
         </div>
         <div class="topbar-actions">
