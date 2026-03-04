@@ -520,21 +520,12 @@ export function renderGraphView(container, state, handlers) {
   const viewportElement = container.querySelector("[data-graph-viewport]");
   const canvasElement = container.querySelector("[data-graph-canvas]");
   const previewLink = container.querySelector("[data-link-preview]");
+  let linkState = null;
+  let laneDragState = null;
+  let nodeDragState = null;
+  let hoveredTargetElement = null;
 
   container.querySelectorAll("[data-node-id]").forEach((element) => {
-    element.addEventListener("click", (event) => {
-      if (suppressNodeClick) {
-        suppressNodeClick = false;
-        return;
-      }
-      if (event.target.closest("[data-link-handle]")) {
-        return;
-      }
-      handlers.onSelectNode?.({
-        threadId: element.dataset.threadId,
-        turnId: element.dataset.turnId || null,
-      });
-    });
     element.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -558,25 +549,19 @@ export function renderGraphView(container, state, handlers) {
       nodeDragState = {
         pointerId: event.pointerId,
         nodeId: node.id,
+        threadId: element.dataset.threadId,
+        turnId: element.dataset.turnId || null,
         element,
         startPoint: getCanvasPoint(event, canvasElement),
         startX: node.x,
         startY: node.y,
         deltaX: 0,
         deltaY: 0,
-        moved: false,
+        dragging: false,
       };
-      element.classList.add("is-dragging");
-      viewportElement?.classList.add("is-node-dragging");
       viewportElement?.setPointerCapture(event.pointerId);
     });
   });
-
-  let linkState = null;
-  let laneDragState = null;
-  let nodeDragState = null;
-  let hoveredTargetElement = null;
-  let suppressNodeClick = false;
 
   function clearHoveredTarget() {
     if (hoveredTargetElement) {
@@ -635,7 +620,7 @@ export function renderGraphView(container, state, handlers) {
     nodeDragState.element.classList.remove("is-dragging");
     nodeDragState.element.removeAttribute("transform");
 
-    if (commit && nodeDragState.moved) {
+    if (commit && nodeDragState.dragging) {
       const node = nodeMap[nodeDragState.nodeId];
       if (node) {
         const nextX = nodeDragState.startX + nodeDragState.deltaX;
@@ -648,7 +633,6 @@ export function renderGraphView(container, state, handlers) {
         };
         nodePositionsByConversation.set(conversation.threadId, nodePositions);
         persistNodePositions();
-        suppressNodeClick = true;
         handlers.onNodePositionChange?.({
           conversationId: conversation.threadId,
           nodeId: node.id,
@@ -705,8 +689,13 @@ export function renderGraphView(container, state, handlers) {
       const deltaY = worldPoint.y - nodeDragState.startPoint.y;
       nodeDragState.deltaX = deltaX;
       nodeDragState.deltaY = deltaY;
-      if (!nodeDragState.moved && Math.abs(deltaX) + Math.abs(deltaY) > 2) {
-        nodeDragState.moved = true;
+      if (!nodeDragState.dragging) {
+        if (Math.abs(deltaX) + Math.abs(deltaY) < 8) {
+          return;
+        }
+        nodeDragState.dragging = true;
+        nodeDragState.element.classList.add("is-dragging");
+        viewportElement?.classList.add("is-node-dragging");
       }
       nodeDragState.element.setAttribute("transform", `translate(${deltaX} ${deltaY})`);
       return;
@@ -737,7 +726,22 @@ export function renderGraphView(container, state, handlers) {
 
   viewportElement?.addEventListener("pointerup", (event) => {
     if (nodeDragState && event.pointerId === nodeDragState.pointerId) {
+      const pointerTarget = document.elementFromPoint(event.clientX, event.clientY);
+      const targetNodeElement = pointerTarget?.closest("[data-node-id]");
+      const handleUnderPointer = pointerTarget?.closest("[data-link-handle]");
+      const shouldSelect =
+        !nodeDragState.dragging &&
+        targetNodeElement?.dataset.nodeId === nodeDragState.nodeId &&
+        !handleUnderPointer;
+      const selectedThreadId = nodeDragState.threadId;
+      const selectedTurnId = nodeDragState.turnId;
       stopNodeDrag(event, true);
+      if (shouldSelect) {
+        handlers.onSelectNode?.({
+          threadId: selectedThreadId,
+          turnId: selectedTurnId,
+        });
+      }
       return;
     }
     if (laneDragState && event.pointerId === laneDragState.pointerId) {

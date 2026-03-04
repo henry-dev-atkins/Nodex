@@ -243,6 +243,17 @@ class CodexManager:
             self._lineage_turn_snapshots(thread_id, upto_turn_id=turn_id, include_error_turns=False),
             include_tool_calls=False,
         )
+        if not history:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": "history_unavailable",
+                        "message": "Cannot branch from this turn because no replayable history is available",
+                        "details": {},
+                    }
+                },
+            )
         child_session = await self._spawn_session()
         try:
             resumed = await child_session.rpc.request_with_retry(
@@ -279,6 +290,52 @@ class CodexManager:
         child_session.local_thread_id = child_thread_id
         child_session.thread_id = child_thread_id
         child_session.last_used_monotonic = asyncio.get_running_loop().time()
+        if not child_thread.get("turns"):
+            try:
+                read_result = await child_session.rpc.request_with_retry(
+                    "thread/read",
+                    {"threadId": child_thread_id, "includeTurns": True},
+                    timeout_s=60,
+                )
+            except TimeoutError as exc:
+                await self._retire_session(child_session)
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": {
+                            "code": "codex_rpc_timeout",
+                            "message": "Timed out while validating the new branch snapshot",
+                            "details": {},
+                        }
+                    },
+                ) from exc
+            except JsonRpcError as exc:
+                await self._retire_session(child_session)
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": {
+                            "code": "codex_rpc_error",
+                            "message": exc.message,
+                            "details": {"rpcCode": exc.code, "rpcData": exc.data},
+                        }
+                    },
+                ) from exc
+            read_thread = read_result.get("thread")
+            if isinstance(read_thread, dict):
+                child_thread = read_thread
+        if not child_thread.get("turns"):
+            await self._retire_session(child_session)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": {
+                        "code": "branch_snapshot_empty",
+                        "message": "Branch creation returned no replayable turns",
+                        "details": {},
+                    }
+                },
+            )
         async with self._session_lock:
             self.sessions[child_thread_id] = child_session
         thread_record = self._sync_thread_snapshot(
@@ -924,10 +981,41 @@ class CodexManager:
                 if upto_turn_id and turn.turnId == upto_turn_id:
                     break
                 continue
-            turns.append({"id": turn.turnId, "items": turn.metadata.get("items", [])})
+            turns.append({"id": turn.turnId, "items": self._items_for_history_from_turn(turn)})
             if upto_turn_id and turn.turnId == upto_turn_id:
                 break
         return turns
+
+    def _items_for_history_from_turn(self, turn: TurnRecord) -> list[dict[str, Any]]:
+        fallback_text = (turn.userText or "").strip()
+        existing = turn.metadata.get("items", [])
+        if isinstance(existing, list):
+            normalized_existing = [item for item in existing if isinstance(item, dict)]
+            if normalized_existing:
+                return self._ensure_user_message_item(normalized_existing, fallback_text)
+        recovered = self._items_from_turn_events(turn.threadId, turn.turnId)
+        if recovered:
+            return self._ensure_user_message_item(recovered, fallback_text)
+        if not fallback_text:
+            return []
+        return [self._user_message_item(fallback_text)]
+
+    def _user_message_item(self, text: str) -> dict[str, Any]:
+        return {
+            "type": "userMessage",
+            "content": [{"type": "text", "text": text, "text_elements": []}],
+        }
+
+    def _ensure_user_message_item(self, items: list[dict[str, Any]], fallback_text: str) -> list[dict[str, Any]]:
+        if not fallback_text:
+            return items
+        for item in items:
+            if item.get("type") != "userMessage":
+                continue
+            extracted = self._extract_user_text_from_items([item])
+            if extracted.strip():
+                return items
+        return [self._user_message_item(fallback_text), *items]
 
     def _items_from_turn_events(self, thread_id: str, turn_id: str) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

@@ -5,6 +5,8 @@ import shutil
 import uuid
 import asyncio
 
+from fastapi import HTTPException
+
 from backend.app.codex_manager import ApprovalHandle, CodexManager, CodexSession
 from backend.app.db import Database
 from backend.app.models import ApprovalRecord, ThreadRecord, TurnRecord
@@ -614,6 +616,268 @@ def test_turn_completed_persists_items_from_events() -> None:
         item_types = [item.get("type") for item in persisted.metadata.get("items", [])]
 
         assert item_types == ["userMessage", "agentMessage"]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_lineage_snapshots_fallback_to_user_message_when_items_missing() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="root",
+                idx=1,
+                userText="Recover this prompt from userText",
+                status="completed",
+                startedAt=now,
+                metadata={},
+            )
+        )
+
+        snapshots = manager._lineage_turn_snapshots("root", upto_turn_id="turn-1", include_error_turns=False)
+
+        assert len(snapshots) == 1
+        assert snapshots[0]["id"] == "turn-1"
+        assert snapshots[0]["items"] == [
+            {
+                "type": "userMessage",
+                "content": [{"type": "text", "text": "Recover this prompt from userText", "text_elements": []}],
+            }
+        ]
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_lineage_snapshots_injects_user_message_when_recovered_items_lack_prompt() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="root",
+                idx=1,
+                userText="Use this prompt text",
+                status="completed",
+                startedAt=now,
+                metadata={},
+            )
+        )
+        db.append_event(
+            "root",
+            "turn-1",
+            1,
+            "item/completed",
+            {"item": {"id": "itm-agent", "type": "agentMessage", "text": "answer"}},
+        )
+
+        snapshots = manager._lineage_turn_snapshots("root", upto_turn_id="turn-1", include_error_turns=False)
+
+        assert len(snapshots) == 1
+        assert snapshots[0]["id"] == "turn-1"
+        items = snapshots[0]["items"]
+        assert items[0]["type"] == "userMessage"
+        assert items[0]["content"][0]["text"] == "Use this prompt text"
+        assert items[1]["type"] == "agentMessage"
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_branch_from_turn_rejects_when_history_is_unavailable() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="root",
+                idx=1,
+                userText="",
+                status="completed",
+                startedAt=now,
+                metadata={},
+            )
+        )
+
+        try:
+            asyncio.run(manager.branch_from_turn("root", "turn-1"))
+            raise AssertionError("Expected branch_from_turn to fail when no history is available")
+        except HTTPException as exc:
+            assert exc.status_code == 409
+            assert exc.detail["error"]["code"] == "history_unavailable"
+        assert db.get_thread("root") is not None
+        assert len(db.list_threads()) == 1
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_branch_from_turn_reads_thread_snapshot_when_resume_is_empty() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="root",
+                idx=1,
+                userText="Branch from here",
+                status="completed",
+                startedAt=now,
+                metadata={
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "Branch from here"}],
+                        }
+                    ]
+                },
+            )
+        )
+
+        class BranchRpc:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            async def request_with_retry(self, method: str, params: dict[str, object], timeout_s: int = 60):
+                self.calls.append((method, params))
+                if method == "thread/resume":
+                    return {
+                        "thread": {
+                            "id": "child-thread",
+                            "createdAt": 0,
+                            "updatedAt": 0,
+                            "turns": [],
+                        }
+                    }
+                if method == "thread/read":
+                    return {
+                        "thread": {
+                            "id": "child-thread",
+                            "createdAt": 0,
+                            "updatedAt": 0,
+                            "turns": [
+                                {
+                                    "id": "child-turn-1",
+                                    "status": "completed",
+                                    "items": [
+                                        {
+                                            "type": "userMessage",
+                                            "content": [{"type": "text", "text": "Branch from here"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                raise AssertionError(f"Unexpected method: {method}")
+
+            async def close(self) -> None:
+                return None
+
+        rpc = BranchRpc()
+
+        async def fake_spawn_session() -> CodexSession:
+            return CodexSession(process_key="proc-branch", rpc=rpc)
+
+        manager._spawn_session = fake_spawn_session  # type: ignore[method-assign]
+
+        result = asyncio.run(manager.branch_from_turn("root", "turn-1"))
+
+        assert result.threadId == "child-thread"
+        assert result.parentThreadId == "root"
+        assert result.forkedFromTurnId == "turn-1"
+        child_turns = db.list_turns("child-thread")
+        assert [turn.turnId for turn in child_turns] == ["child-turn-1"]
+        assert any(method == "thread/read" for method, _params in rpc.calls)
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_branch_from_turn_rejects_empty_snapshot_after_read() -> None:
+    temp_root = make_temp_root()
+    settings = make_settings(temp_root)
+    db = Database(settings.db_path)
+    manager = CodexManager(db=db, ws=WebSocketHub(), settings=settings)
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="root",
+                idx=1,
+                userText="Branch from here",
+                status="completed",
+                startedAt=now,
+                metadata={
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "Branch from here"}],
+                        }
+                    ]
+                },
+            )
+        )
+
+        class EmptyBranchRpc:
+            async def request_with_retry(self, method: str, params: dict[str, object], timeout_s: int = 60):
+                if method not in {"thread/resume", "thread/read"}:
+                    raise AssertionError(f"Unexpected method: {method}")
+                return {
+                    "thread": {
+                        "id": "child-thread",
+                        "createdAt": 0,
+                        "updatedAt": 0,
+                        "turns": [],
+                    }
+                }
+
+            async def close(self) -> None:
+                return None
+
+        async def fake_spawn_session() -> CodexSession:
+            return CodexSession(process_key="proc-branch", rpc=EmptyBranchRpc())
+
+        retired: list[str] = []
+
+        async def fake_retire_session(session: CodexSession) -> None:
+            retired.append(session.process_key)
+
+        manager._spawn_session = fake_spawn_session  # type: ignore[method-assign]
+        manager._retire_session = fake_retire_session  # type: ignore[method-assign]
+
+        try:
+            asyncio.run(manager.branch_from_turn("root", "turn-1"))
+            raise AssertionError("Expected branch_from_turn to fail when branch snapshot has no turns")
+        except HTTPException as exc:
+            assert exc.status_code == 502
+            assert exc.detail["error"]["code"] == "branch_snapshot_empty"
+        assert retired == ["proc-branch"]
+        assert db.get_thread("child-thread") is None
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)
