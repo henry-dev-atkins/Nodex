@@ -43,6 +43,31 @@ function setStatusIndicator(status) {
   elements.status.setAttribute("aria-label", labels[status] || status);
 }
 
+function workspaceNameFromPath(path) {
+  const value = String(path || "").trim();
+  if (!value) {
+    return "";
+  }
+  const trimmed = value.replace(/[\\/]+$/, "");
+  if (!trimmed) {
+    return "";
+  }
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+}
+
+function resolveWorkspacePath(state, selectedThread) {
+  if (selectedThread?.metadata?.cwd) {
+    return selectedThread.metadata.cwd;
+  }
+  for (const thread of Object.values(state.threads)) {
+    if (thread?.metadata?.cwd) {
+      return thread.metadata.cwd;
+    }
+  }
+  return "";
+}
+
 function focusComposer(state) {
   if (state.composerFocusNonce === lastComposerFocusNonce) {
     return;
@@ -191,12 +216,16 @@ function renderShell(state) {
   const selectedNode = getSelectedNode(state);
   const branchLabel = selectedThread ? getBranchLabel(state, selectedThread.threadId) : "Branch";
   const currentTurnLabel = `${branchLabel} | ${selectedNode?.turn ? `T${selectedNode.turn.idx}` : "Start"}`;
+  const workspacePath = resolveWorkspacePath(state, selectedThread);
+  const workspaceName = workspaceNameFromPath(workspacePath);
 
   setStatusIndicator(state.connectionStatus);
   elements.errorBanner.className = state.errorMessage ? "error-banner" : "";
   elements.errorBanner.textContent = state.errorMessage || "";
   elements.title.textContent = selectedThread ? threadLabel(selectedThread) : "No conversation";
   elements.turnLabel.textContent = currentTurnLabel;
+  elements.workspaceLabel.textContent = workspaceName || "workspace";
+  elements.workspaceLabel.title = workspacePath || "";
   elements.mainShell.dataset.viewMode = state.viewMode;
   elements.focusModeButton.classList.toggle("is-active", state.viewMode === "focus");
   elements.mapModeButton.classList.toggle("is-active", state.viewMode === "map");

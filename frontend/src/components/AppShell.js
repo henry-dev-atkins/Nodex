@@ -49,6 +49,7 @@ export function renderAppShell(container) {
         <div class="topbar-mainline">
           <h2 id="thread-title">No conversation</h2>
           <span id="thread-turn-label" class="topbar-turn">Start</span>
+          <span id="workspace-label" class="topbar-workspace">workspace</span>
         </div>
         <div id="action-bar-root" class="topbar-action-slot"></div>
         <div class="topbar-actions">
@@ -104,6 +105,7 @@ export function renderAppShell(container) {
     contextMenu: ensureContextMenuRoot(),
     title: container.querySelector("#thread-title"),
     turnLabel: container.querySelector("#thread-turn-label"),
+    workspaceLabel: container.querySelector("#workspace-label"),
     status: container.querySelector("#connection-status"),
     focusModeButton: container.querySelector("#focus-mode-button"),
     mapModeButton: container.querySelector("#map-mode-button"),

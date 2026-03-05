@@ -169,6 +169,18 @@ input {
   white-space: nowrap;
 }
 
+.topbar-workspace {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
 .topbar-actions {
   display: inline-flex;
   align-items: center;
@@ -1080,14 +1092,6 @@ body.is-resizing * {
   background: var(--surface-subtle);
 }
 
-.chat-bubble-label {
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .chat-bubble-text {
   color: var(--text);
   font-size: 0.83rem;
@@ -1104,10 +1108,12 @@ body.is-resizing * {
 }
 
 .chat-inline-toggle {
-  align-self: flex-start;
+  align-self: flex-end;
+  margin: 0;
   min-height: 18px;
   padding: 0 6px;
   font-size: 0.62rem;
+  text-align: right;
   line-height: 1.1;
 }
 
@@ -1173,10 +1179,13 @@ body.is-resizing * {
 .chat-aux-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
   gap: 6px;
 }
 
 .chat-aux-toggle {
+  text-align: left;
   min-height: 24px;
   padding: 2px 8px;
   font-size: 0.74rem;
@@ -1249,7 +1258,9 @@ body.is-resizing * {
 }
 
 .composer-input-shell {
-  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
 }
 
 .composer-form textarea,
@@ -1265,8 +1276,9 @@ body.is-resizing * {
 }
 
 .composer-form textarea {
-  padding-right: 132px;
-  padding-bottom: 40px;
+  flex: 1 1 auto;
+  padding-right: 12px;
+  padding-bottom: 10px;
 }
 
 .composer-form textarea:disabled {
@@ -1275,7 +1287,6 @@ body.is-resizing * {
   cursor: not-allowed;
 }
 
-.composer-actions,
 .modal-actions,
 .modal-header {
   display: flex;
@@ -1285,19 +1296,26 @@ body.is-resizing * {
 }
 
 .composer-actions {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  justify-content: flex-end;
+  display: flex;
+  flex: 0 0 44px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
   z-index: 1;
 }
 
 .composer-actions .primary-button,
 .composer-actions .danger-button,
 .composer-actions .ghost-button {
-  min-height: 32px;
-  padding: 5px 12px;
-  font-size: 0.82rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  padding: 5px 6px;
+  font-size: 0.76rem;
+}
+
+.composer-actions .primary-button {
+  border-radius: 0;
 }
 
 .composer-stop-row {
@@ -1553,10 +1571,6 @@ body.is-resizing * {
   }
 
   .composer-input-shell .composer-actions {
-    right: 6px;
-    bottom: 6px;
-    gap: 6px;
-    flex-direction: row;
-    align-items: center;
+    flex: 0 0 42px;
   }
 }

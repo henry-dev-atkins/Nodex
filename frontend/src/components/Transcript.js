@@ -2,6 +2,8 @@ import { escapeHtml, formatText } from "../rendering.js";
 import { getNodeId } from "../selectors.js";
 import { buildTranscriptViewModel, CLAMP_LINE_COUNT, getApprovalSummary } from "../transcriptViewModel.js";
 
+const FEED_SYNC_STATE = new WeakMap();
+
 function renderApprovalAttachments(approvals) {
   if (!approvals.length) {
     return "";
@@ -115,17 +117,31 @@ function syncTranscriptFeed(container, selectedNode, selectedTurn, headTurn) {
   if (!feed) {
     return;
   }
+
   const activeNodeId = selectedNode?.thread?.threadId && selectedNode?.turn?.turnId
     ? getNodeId(selectedNode.thread.threadId, selectedNode.turn.turnId)
     : null;
-  if (activeNodeId) {
+
+  const previous = FEED_SYNC_STATE.get(container) || null;
+  const current = {
+    activeNodeId,
+    selectedTurnId: selectedTurn?.turnId || null,
+    headTurnId: headTurn?.turnId || null,
+  };
+  FEED_SYNC_STATE.set(container, current);
+
+  const selectionChanged = !previous || previous.activeNodeId !== current.activeNodeId;
+  const headChanged = !previous || previous.headTurnId !== current.headTurnId;
+
+  if (activeNodeId && selectionChanged) {
     const activeRow = feed.querySelector(`[data-turn-node="${activeNodeId}"]`);
     if (activeRow) {
       activeRow.scrollIntoView({ block: "nearest" });
       return;
     }
   }
-  if (!selectedTurn || headTurn?.turnId === selectedTurn.turnId) {
+
+  if ((!selectedTurn || headTurn?.turnId === selectedTurn.turnId) && headChanged) {
     feed.scrollTop = feed.scrollHeight;
   }
 }
@@ -164,7 +180,6 @@ export function renderTranscript(container, state, handlers) {
             <div class="composer-input-shell">
               <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
               <div class="composer-actions">
-                <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
                 <button class="primary-button" type="submit">Send</button>
               </div>
             </div>
@@ -173,9 +188,6 @@ export function renderTranscript(container, state, handlers) {
       </section>
     `;
 
-    container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
-      handlers.onDeleteConversation(vm.selectedNode.conversationId || vm.thread.threadId);
-    });
     container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const input = container.querySelector("[data-transcript-composer-input]");
@@ -212,7 +224,6 @@ export function renderTranscript(container, state, handlers) {
                 </header>
                 <div class="chat-row chat-row-user" data-turn-select-thread="${row.rowThreadId}" data-turn-select-turn="${row.turn.turnId}">
                   <section class="chat-bubble chat-bubble-user">
-                    <div class="chat-bubble-label">You</div>
                     <div class="chat-bubble-text ${!row.userExpanded ? "is-collapsed" : ""}" style="${!row.userExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(row.userText)}</div>
                     ${
                       row.userNeedsToggle
@@ -230,7 +241,6 @@ export function renderTranscript(container, state, handlers) {
                 </div>
                 <div class="chat-row chat-row-assistant" data-turn-select-thread="${row.rowThreadId}" data-turn-select-turn="${row.turn.turnId}">
                   <section class="chat-bubble chat-bubble-assistant">
-                    <div class="chat-bubble-label">Assistant</div>
                     <div class="chat-bubble-text ${!row.assistantExpanded ? "is-collapsed" : ""}" style="${!row.assistantExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(row.assistantText)}</div>
                     ${
                       row.assistantNeedsToggle
@@ -309,7 +319,6 @@ export function renderTranscript(container, state, handlers) {
               )}"
             ></textarea>
             <div class="composer-actions">
-              <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
               <button class="primary-button" type="submit" ${vm.composerDisabled ? "disabled" : ""}>Send</button>
             </div>
           </div>
@@ -330,28 +339,50 @@ export function renderTranscript(container, state, handlers) {
     });
   });
 
+  const withPreservedFeedScroll = (action) => {
+    const feed = container.querySelector("[data-transcript-feed]");
+    const previousScrollTop = feed?.scrollTop ?? null;
+    action();
+    if (previousScrollTop === null) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      const nextFeed = container.querySelector("[data-transcript-feed]");
+      if (!nextFeed) {
+        return;
+      }
+      nextFeed.scrollTop = previousScrollTop;
+    });
+  };
+
   container.querySelectorAll("[data-toggle-assistant-thread][data-toggle-assistant-turn]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      handlers.onToggleAssistantExpanded(button.dataset.toggleAssistantThread, button.dataset.toggleAssistantTurn);
+      withPreservedFeedScroll(() => {
+        handlers.onToggleAssistantExpanded(button.dataset.toggleAssistantThread, button.dataset.toggleAssistantTurn);
+      });
     });
   });
 
   container.querySelectorAll("[data-toggle-user-thread][data-toggle-user-turn]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      handlers.onToggleUserExpanded(button.dataset.toggleUserThread, button.dataset.toggleUserTurn);
+      withPreservedFeedScroll(() => {
+        handlers.onToggleUserExpanded(button.dataset.toggleUserThread, button.dataset.toggleUserTurn);
+      });
     });
   });
 
   container.querySelectorAll("[data-toggle-aux-thread][data-toggle-aux-turn][data-toggle-aux-panel]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      handlers.onToggleAuxPanel(
-        button.dataset.toggleAuxThread,
-        button.dataset.toggleAuxTurn,
-        button.dataset.toggleAuxPanel,
-      );
+      withPreservedFeedScroll(() => {
+        handlers.onToggleAuxPanel(
+          button.dataset.toggleAuxThread,
+          button.dataset.toggleAuxTurn,
+          button.dataset.toggleAuxPanel,
+        );
+      });
     });
   });
 
@@ -362,9 +393,6 @@ export function renderTranscript(container, state, handlers) {
     });
   });
 
-  container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
-    handlers.onDeleteConversation(vm.selectedNode?.conversationId || vm.thread.threadId);
-  });
   container.querySelector("[data-interrupt-turn-button]")?.addEventListener("click", async () => {
     await handlers.onInterrupt(vm.thread.threadId);
   });

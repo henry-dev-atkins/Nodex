@@ -325,9 +325,6 @@ export function createStore() {
     },
     toggleUserExpanded(threadId, turnId) {
       const key = getNodeId(threadId, turnId);
-      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
-      state.selectedThreadId = threadId;
-      state.selectedNodeId = key;
       const entry = ensureTranscriptUiEntry(state, key);
       entry.userExpanded = !entry.userExpanded;
       maybeDropTranscriptUiEntry(state, key);
@@ -335,9 +332,6 @@ export function createStore() {
     },
     toggleAssistantExpanded(threadId, turnId) {
       const key = getNodeId(threadId, turnId);
-      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
-      state.selectedThreadId = threadId;
-      state.selectedNodeId = key;
       const entry = ensureTranscriptUiEntry(state, key);
       entry.assistantExpanded = !entry.assistantExpanded;
       maybeDropTranscriptUiEntry(state, key);
@@ -346,9 +340,6 @@ export function createStore() {
     toggleTurnAuxPanel(threadId, turnId, panel) {
       const normalizedPanel = panel === "commands" ? "commands" : panel === "reasoning" ? "reasoning" : null;
       const key = getNodeId(threadId, turnId);
-      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
-      state.selectedThreadId = threadId;
-      state.selectedNodeId = key;
       const entry = ensureTranscriptUiEntry(state, key);
       if (entry.openAux === normalizedPanel || !normalizedPanel) {
         entry.openAux = null;
