@@ -22,6 +22,9 @@ Source spec: [UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrappe
 - The shipped action model is now explicit: `Continue`, `Branch`, `Merge Into...`, and `Compare`.
 - The shipped transcript is paired with a `Current Context` stack so inherited and imported context are visible without reading the DAG first.
 - The shipped graph uses vertical branch lanes with prompt-labeled node boxes, `Main / Branch n` naming, and persisted manual lane ordering because that proved clearer than number-only nodes.
+- The shipped graph interaction now uses a click-vs-drag threshold so node repositioning and node selection do not interfere with each other.
+- The shipped map context menu now includes direct empty-start-node deletion for empty branches and empty root conversations.
+- The shipped branch flow now reconstructs replayable lineage history from stored turns/events and rejects empty resume snapshots to prevent ghost branches.
 - The shipped transcript includes inherited parent-lineage rows so a branch always shows the context it forked from.
 - Long responses are intended to scroll inside bounded detail containers rather than expanding the entire transcript panel.
 - The main remaining purpose of this document is traceability from implementation back to design intent.
@@ -75,12 +78,15 @@ Scope:
 - Show temporary drag line
 - Open a create-child modal on valid drop
 - Render solid primary-parent edges and dashed imported-context edges
+- Keep node selection and node drag behavior disambiguated with a movement threshold
+- Support deleting empty branches/conversations directly from map start nodes
 - Enforce downward-only linking and cycle prevention
 
 Acceptance criteria:
 
 - Users can create a linked child turn entirely from the DAG
 - Imported context links render distinctly from primary lineage
+- Empty branch roots can be cleaned up directly from the DAG without leaving map mode
 - Invalid links are blocked before commit
 
 ## Phase 4: Transcript and Approval Simplification
@@ -137,6 +143,7 @@ Acceptance criteria:
 - Runtime enforces the process cap
 - Idle processes are reclaimed predictably
 - Reopening a previously evicted thread resumes cleanly
+- Branch-from-turn reconstruction fails fast when replayable history is unavailable and rejects empty resumed snapshots
 
 ## Phase 7: Documentation and Tooling Alignment
 
@@ -177,3 +184,4 @@ Acceptance criteria:
 - Transcript and approvals are dense and low-noise.
 - Runtime process management is bounded and tested.
 - README, spec, and plan stay aligned.
+- Branch creation, DAG node interaction, and empty-branch cleanup behavior are explicitly documented as core features.

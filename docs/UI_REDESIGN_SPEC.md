@@ -12,6 +12,9 @@ Current shipped refinements on top of this spec:
 - Branches are labeled `Main`, `Branch 1`, `Branch 2`, and so on.
 - Branch transcripts include inherited parent-lineage rows.
 - Branch lanes can be manually reordered in the DAG and that order persists locally.
+- Branch creation now requires replayable lineage history and validates resumed branch snapshots to prevent empty ghost branches.
+- DAG node selection now explicitly distinguishes click from drag so positioning nodes does not cause accidental reselection.
+- Empty start nodes now expose direct delete actions for empty branches and empty root conversations.
 
 ## 1. Global Visual System Changes
 
