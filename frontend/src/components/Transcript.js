@@ -1,103 +1,6 @@
-import { buildBlocks, escapeHtml, formatText, humanizeTurnStatus, normalizeText, summarizeTurn } from "../rendering.js";
-import {
-  getApprovalsForTurn,
-  getBranchLabel,
-  getContextLinkAnchor,
-  getContextLinkMode,
-  getContextLinkScopeCount,
-  getContextLinks,
-  getHeadTurn,
-  getNodeId,
-  getSelectedNode,
-  getSelectedThread,
-  getTurns,
-} from "../selectors.js";
-
-const CLAMP_LINE_COUNT = 2;
-
-function getStatusMark(turn, approvals) {
-  if (approvals.some((approval) => approval.status === "pending")) {
-    return { label: "...", tone: "is-running", title: "Waiting on approval" };
-  }
-  const decided = approvals.filter((approval) => approval.status === "approve" || approval.status === "deny");
-  const latest = decided[decided.length - 1];
-  if (latest?.status === "approve") {
-    return { label: "ok", tone: "is-ok", title: "Approved" };
-  }
-  if (latest?.status === "deny") {
-    return { label: "deny", tone: "is-error", title: "Denied" };
-  }
-  if (turn.status === "running" || turn.status === "inProgress") {
-    return { label: "...", tone: "is-running", title: "Running" };
-  }
-  if (turn.status === "error" || turn.status === "failed" || turn.status === "interrupted") {
-    return { label: "!", tone: "is-error", title: humanizeTurnStatus(turn.status) };
-  }
-  return { label: "ok", tone: "is-done", title: humanizeTurnStatus(turn.status) };
-}
-
-function getApprovalSummary(approval) {
-  const details = approval.details || {};
-  if (approval.requestMethod === "item/commandExecution/requestApproval") {
-    return normalizeText(details.command || "Codex requested command approval.");
-  }
-  return normalizeText(details.reason || "Codex requested file-change approval.");
-}
-
-function getAssistantText(blocks, summary) {
-  const assistant = [...blocks].reverse().find((block) => block.kind === "assistant");
-  if (assistant?.plainText?.trim()) {
-    return assistant.plainText.trim();
-  }
-  return summary.preview || "No response captured yet.";
-}
-
-function shouldOfferExpand(text) {
-  const normalized = normalizeText(text || "").trim();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized.includes("\n")) {
-    return true;
-  }
-  return normalized.length > 120;
-}
-
-function getReasoningBlocks(blocks) {
-  const seen = new Set();
-  return blocks
-    .filter((block) => block.isReasoning || block.title === "Commentary")
-    .filter((block) => {
-      const text = normalizeText(block.plainText || "").trim();
-      if (!text) {
-        return false;
-      }
-      const key = `${block.title}:${text}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-}
-
-function getCommandBlocks(blocks) {
-  const seen = new Set();
-  return blocks
-    .filter((block) => block.kind === "tool" || block.kind === "warning" || block.kind === "error")
-    .filter((block) => {
-      const text = normalizeText(block.plainText || "").trim();
-      if (!text) {
-        return false;
-      }
-      const key = `${block.title}:${text}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-}
+import { escapeHtml, formatText } from "../rendering.js";
+import { getNodeId } from "../selectors.js";
+import { buildTranscriptViewModel, CLAMP_LINE_COUNT, getApprovalSummary } from "../transcriptViewModel.js";
 
 function renderApprovalAttachments(approvals) {
   if (!approvals.length) {
@@ -133,42 +36,38 @@ function renderApprovalAttachments(approvals) {
   `;
 }
 
-function renderOriginBadge(entry, rowBranchLabel) {
-  if (entry.imported) {
-    const scopeCount = entry.sourceNodeCount || 1;
-    const mode = entry.mergeMode || "verbose";
+function renderOriginBadge(originBadge, rowBranchLabel) {
+  if (!originBadge) {
+    return "";
+  }
+  if (originBadge.kind === "imported") {
+    const scopeCount = originBadge.sourceNodeCount;
+    const mode = originBadge.mergeMode;
     return `
       <span class="chat-turn-origin is-imported">
-        &#8627; Imported from ${escapeHtml(rowBranchLabel)} into T${entry.importedIntoTurnIdx} | ${escapeHtml(mode)} | ${scopeCount} turn${scopeCount === 1 ? "" : "s"}
+        &#8627; Imported from ${escapeHtml(rowBranchLabel)} into T${originBadge.importedIntoTurnIdx} | ${escapeHtml(mode)} | ${scopeCount} turn${scopeCount === 1 ? "" : "s"}
       </span>
     `;
   }
-  if (entry.inherited) {
+  if (originBadge.kind === "inherited") {
     return `<span class="chat-turn-origin is-inherited">&#8627; Inherited from ${escapeHtml(rowBranchLabel)}</span>`;
   }
   return "";
 }
 
-function renderContextSummary(state, contextLinks) {
-  if (!contextLinks.length) {
+function renderContextSummary(items) {
+  if (!items.length) {
     return "";
   }
   return `
     <div class="chat-context-summary">
-      ${contextLinks
-        .map((link) => {
-          const anchor = getContextLinkAnchor(link);
-          if (!anchor) {
-            return "";
-          }
-          const sourceTurn = getTurns(state, anchor.threadId).find((item) => item.turnId === anchor.turnId);
-          const label = sourceTurn ? `T${sourceTurn.idx}` : anchor.turnId.slice(0, 8);
-          const scopeCount = getContextLinkScopeCount(link);
+      ${items
+        .map((item) => {
           return `
-            <span class="chat-context-chip">
-              ${escapeHtml(getBranchLabel(state, anchor.threadId))} / ${escapeHtml(label)} | ${escapeHtml(getContextLinkMode(link))} | ${scopeCount}
-            </span>
-          `;
+          <span class="chat-context-chip">
+            ${escapeHtml(item.branchLabel)} / ${escapeHtml(item.label)} | ${escapeHtml(item.mode)} | ${item.scopeCount}
+          </span>
+        `;
         })
         .join("")}
     </div>
@@ -211,60 +110,7 @@ function renderAuxPanel(auxPanel, reasoningBlocks, commandBlocks) {
   return "";
 }
 
-function buildTranscriptEntries(state, threadId, targetThreadId = threadId, cutoffTurnId = null) {
-  const thread = state.threads[threadId];
-  if (!thread) {
-    return [];
-  }
-  const inheritedEntries = thread.parentThreadId
-    ? buildTranscriptEntries(state, thread.parentThreadId, targetThreadId, thread.forkedFromTurnId)
-    : [];
-  const turns = getTurns(state, threadId);
-  const cutoffIdx = cutoffTurnId ? turns.find((turn) => turn.turnId === cutoffTurnId)?.idx ?? turns.length : null;
-  const visibleTurns = cutoffIdx === null ? turns : turns.filter((turn) => turn.idx <= cutoffIdx);
-  const entries = [...inheritedEntries];
-  const seenNodeIds = new Set(entries.map((entry) => getNodeId(entry.threadId, entry.turn.turnId)));
-
-  for (const turn of visibleTurns) {
-    for (const link of getContextLinks(turn)) {
-      const anchor = getContextLinkAnchor(link);
-      if (!anchor) {
-        continue;
-      }
-      const importedTurn = getTurns(state, anchor.threadId).find((item) => item.turnId === anchor.turnId);
-      const importedNodeId = getNodeId(anchor.threadId, anchor.turnId);
-      if (!importedTurn || seenNodeIds.has(importedNodeId)) {
-        continue;
-      }
-      entries.push({
-        threadId: anchor.threadId,
-        turn: importedTurn,
-        inherited: false,
-        imported: true,
-        importedIntoTurnId: turn.turnId,
-        importedIntoTurnIdx: turn.idx,
-        mergeMode: getContextLinkMode(link),
-        sourceNodeCount: getContextLinkScopeCount(link),
-      });
-      seenNodeIds.add(importedNodeId);
-    }
-
-    const nodeId = getNodeId(threadId, turn.turnId);
-    if (!seenNodeIds.has(nodeId)) {
-      entries.push({
-        threadId,
-        turn,
-        inherited: threadId !== targetThreadId,
-        imported: false,
-      });
-      seenNodeIds.add(nodeId);
-    }
-  }
-
-  return entries;
-}
-
-function syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTurn) {
+function syncTranscriptFeed(container, selectedNode, selectedTurn, headTurn) {
   const feed = container.querySelector("[data-transcript-feed]");
   if (!feed) {
     return;
@@ -284,46 +130,31 @@ function syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTu
   }
 }
 
+function renderComposerIntent(vm) {
+  if (vm.composerDisabledReason) {
+    return vm.composerDisabledReason;
+  }
+  if (vm.forcedBranchActive && vm.selectedTurn) {
+    return `Branch from T${vm.selectedTurn.idx}`;
+  }
+  if (vm.selectedTurn && vm.headTurn?.turnId !== vm.selectedTurn.turnId) {
+    return `Reply from T${vm.selectedTurn.idx} to branch`;
+  }
+  return `Continue ${vm.branchLabel}`;
+}
+
 export function renderTranscript(container, state, handlers) {
-  const thread = getSelectedThread(state);
-  if (!thread) {
+  const vm = buildTranscriptViewModel(state);
+  if (!vm.hasThread) {
     container.innerHTML = '<div class="empty-state">Select a node to inspect a branch transcript.</div>';
     return;
   }
 
-  const selectedNode = getSelectedNode(state) || { thread, turn: null, conversationId: thread.threadId };
-  const turns = getTurns(state, thread.threadId);
-  const headTurn = getHeadTurn(state, thread.threadId);
-  const selectedTurn = selectedNode?.thread?.threadId === thread.threadId ? selectedNode.turn : null;
-  const focusTurn = selectedTurn || headTurn;
-  const focusCutoffIdx = focusTurn?.idx || turns[turns.length - 1]?.idx || 0;
-  const branchLabel = getBranchLabel(state, thread.threadId);
-  const transcriptEntries = buildTranscriptEntries(state, thread.threadId);
-  const forcedBranchActive = state.forcedBranchNodeId && state.forcedBranchNodeId === selectedNode?.nodeId;
-  const activeContextCount = turns
-    .filter((turn) => turn.idx <= focusCutoffIdx)
-    .reduce((count, turn) => count + getContextLinks(turn).length, 0);
-  const busyTurn = turns.find((turn) => {
-    if (turn.status === "running" || turn.status === "inProgress") {
-      return true;
-    }
-    return getApprovalsForTurn(state, thread.threadId, turn.turnId).some((approval) => approval.status === "pending");
-  }) || null;
-  const busyTurnNeedsApproval = busyTurn
-    ? getApprovalsForTurn(state, thread.threadId, busyTurn.turnId).some((approval) => approval.status === "pending")
-    : false;
-  const composerDisabled = Boolean(busyTurn);
-  const composerDisabledReason = busyTurn
-    ? busyTurnNeedsApproval
-      ? `Waiting for approval on T${busyTurn.idx}`
-      : `Waiting for T${busyTurn.idx} to finish`
-    : "";
-
-  if (!turns.length) {
+  if (!vm.turns.length) {
     container.innerHTML = `
       <section class="transcript-shell">
         <section class="transcript-header-line" title="This transcript follows the selected branch.">
-          <strong>${branchLabel} / Start</strong>
+          <strong>${vm.branchLabel} / Start</strong>
         </section>
         <div class="transcript-feed" data-transcript-feed="1">
           <div class="empty-state">Select a node to inspect a branch transcript.</div>
@@ -343,7 +174,7 @@ export function renderTranscript(container, state, handlers) {
     `;
 
     container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
-      handlers.onDeleteConversation(selectedNode.conversationId || thread.threadId);
+      handlers.onDeleteConversation(vm.selectedNode.conversationId || vm.thread.threadId);
     });
     container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -352,7 +183,7 @@ export function renderTranscript(container, state, handlers) {
       if (!text) {
         return;
       }
-      await handlers.onSubmit(selectedNode, text);
+      await handlers.onSubmit(vm.selectedNode, text);
       if (input) {
         input.value = "";
       }
@@ -363,103 +194,84 @@ export function renderTranscript(container, state, handlers) {
   container.innerHTML = `
     <section class="transcript-shell">
       <section class="transcript-header-line" title="Imported-link highlighting updates as you browse the branch.">
-        <strong>${branchLabel} / ${focusTurn ? `T${focusTurn.idx}` : "Start"}${activeContextCount ? ` / +${activeContextCount}` : ""}</strong>
+        <strong>${vm.branchLabel} / ${vm.focusTurn ? `T${vm.focusTurn.idx}` : "Start"}${vm.activeContextCount ? ` / +${vm.activeContextCount}` : ""}</strong>
       </section>
       <div class="transcript-feed" data-transcript-feed="1">
-        ${transcriptEntries
-          .map((entry) => {
-            const rowThreadId = entry.threadId;
-            const turn = entry.turn;
-            const rowBranchLabel = getBranchLabel(state, rowThreadId);
-            const nodeId = getNodeId(rowThreadId, turn.turnId);
-            const events = state.eventsByTurn[`${rowThreadId}:${turn.turnId}`] || [];
-            const approvals = getApprovalsForTurn(state, rowThreadId, turn.turnId);
-            const blocks = buildBlocks(turn, events, approvals);
-            const summary = summarizeTurn(turn, blocks, approvals);
-            const contextLinks = getContextLinks(turn);
-            const selected = selectedNode?.thread?.threadId === rowThreadId && selectedNode?.turn?.turnId === turn.turnId;
-            const statusMark = getStatusMark(turn, approvals);
-            const reasoningBlocks = getReasoningBlocks(blocks);
-            const commandBlocks = getCommandBlocks(blocks);
-            const auxPanel = state.auxPanelByNode?.[nodeId] || null;
-            const userExpanded = Boolean(state.userExpandedByNode?.[nodeId]);
-            const assistantExpanded = Boolean(state.assistantExpandedByNode?.[nodeId]);
-            const userText = normalizeText(summary.prompt || "No prompt captured.");
-            const assistantText = normalizeText(getAssistantText(blocks, summary)).trim();
-            const userNeedsToggle = shouldOfferExpand(userText);
-            const assistantNeedsToggle = shouldOfferExpand(assistantText || "No response captured yet.");
+        ${vm.transcriptRows
+          .map((row) => {
+            const entry = row.entry;
             return `
-              <article class="chat-turn ${selected ? "selected" : ""} ${entry.inherited ? "is-inherited" : ""} ${entry.imported ? "is-imported" : ""}" data-turn-node="${nodeId}">
+              <article class="chat-turn ${row.selected ? "selected" : ""} ${entry.inherited ? "is-inherited" : ""} ${entry.imported ? "is-imported" : ""}" data-turn-node="${row.nodeId}">
                 <header class="chat-turn-head">
                   <div class="chat-turn-head-main">
-                    <span class="chat-turn-id">T${turn.idx}</span>
-                    <span class="chat-turn-branch">${escapeHtml(rowBranchLabel)}</span>
-                    <span class="chat-turn-status ${statusMark.tone}" title="${escapeHtml(statusMark.title)}">${escapeHtml(statusMark.label)}</span>
+                    <span class="chat-turn-id">T${row.turn.idx}</span>
+                    <span class="chat-turn-branch">${escapeHtml(row.rowBranchLabel)}</span>
+                    <span class="chat-turn-status ${row.statusMark.tone}" title="${escapeHtml(row.statusMark.title)}">${escapeHtml(row.statusMark.label)}</span>
                   </div>
-                  ${renderOriginBadge(entry, rowBranchLabel)}
+                  ${renderOriginBadge(row.originBadge, row.rowBranchLabel)}
                 </header>
-                <div class="chat-row chat-row-user" data-turn-select-thread="${rowThreadId}" data-turn-select-turn="${turn.turnId}">
+                <div class="chat-row chat-row-user" data-turn-select-thread="${row.rowThreadId}" data-turn-select-turn="${row.turn.turnId}">
                   <section class="chat-bubble chat-bubble-user">
                     <div class="chat-bubble-label">You</div>
-                    <div class="chat-bubble-text ${!userExpanded ? "is-collapsed" : ""}" style="${!userExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(userText)}</div>
+                    <div class="chat-bubble-text ${!row.userExpanded ? "is-collapsed" : ""}" style="${!row.userExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(row.userText)}</div>
                     ${
-                      userNeedsToggle
+                      row.userNeedsToggle
                         ? `
                           <button
                             type="button"
                             class="ghost-button chat-inline-toggle"
-                            data-toggle-user-thread="${rowThreadId}"
-                            data-toggle-user-turn="${turn.turnId}"
-                          >${userExpanded ? "less" : "more"}</button>
+                            data-toggle-user-thread="${row.rowThreadId}"
+                            data-toggle-user-turn="${row.turn.turnId}"
+                          >${row.userExpanded ? "less" : "more"}</button>
                         `
                         : ""
                     }
                   </section>
                 </div>
-                <div class="chat-row chat-row-assistant" data-turn-select-thread="${rowThreadId}" data-turn-select-turn="${turn.turnId}">
+                <div class="chat-row chat-row-assistant" data-turn-select-thread="${row.rowThreadId}" data-turn-select-turn="${row.turn.turnId}">
                   <section class="chat-bubble chat-bubble-assistant">
                     <div class="chat-bubble-label">Assistant</div>
-                    <div class="chat-bubble-text ${!assistantExpanded ? "is-collapsed" : ""}" style="${!assistantExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(assistantText || "No response captured yet.")}</div>
+                    <div class="chat-bubble-text ${!row.assistantExpanded ? "is-collapsed" : ""}" style="${!row.assistantExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(row.assistantText)}</div>
                     ${
-                      assistantNeedsToggle
+                      row.assistantNeedsToggle
                         ? `
                           <button
                             type="button"
                             class="ghost-button chat-inline-toggle"
-                            data-toggle-assistant-thread="${rowThreadId}"
-                            data-toggle-assistant-turn="${turn.turnId}"
-                          >${assistantExpanded ? "less" : "more"}</button>
+                            data-toggle-assistant-thread="${row.rowThreadId}"
+                            data-toggle-assistant-turn="${row.turn.turnId}"
+                          >${row.assistantExpanded ? "less" : "more"}</button>
                         `
                         : ""
                     }
-                    ${renderApprovalAttachments(approvals)}
+                    ${renderApprovalAttachments(row.approvals)}
                     ${
-                      reasoningBlocks.length || commandBlocks.length
+                      row.reasoningBlocks.length || row.commandBlocks.length
                         ? `
                           <div class="chat-aux-actions">
                             ${
-                              reasoningBlocks.length
+                              row.reasoningBlocks.length
                                 ? `
                                   <button
                                     type="button"
-                                    class="ghost-button chat-aux-toggle ${auxPanel === "reasoning" ? "is-active" : ""}"
-                                    data-toggle-aux-thread="${rowThreadId}"
-                                    data-toggle-aux-turn="${turn.turnId}"
+                                    class="ghost-button chat-aux-toggle ${row.auxPanel === "reasoning" ? "is-active" : ""}"
+                                    data-toggle-aux-thread="${row.rowThreadId}"
+                                    data-toggle-aux-turn="${row.turn.turnId}"
                                     data-toggle-aux-panel="reasoning"
-                                  >Reasoning (${reasoningBlocks.length})</button>
+                                  >Reasoning (${row.reasoningBlocks.length})</button>
                                 `
                                 : ""
                             }
                             ${
-                              commandBlocks.length
+                              row.commandBlocks.length
                                 ? `
                                   <button
                                     type="button"
-                                    class="ghost-button chat-aux-toggle ${auxPanel === "commands" ? "is-active" : ""}"
-                                    data-toggle-aux-thread="${rowThreadId}"
-                                    data-toggle-aux-turn="${turn.turnId}"
+                                    class="ghost-button chat-aux-toggle ${row.auxPanel === "commands" ? "is-active" : ""}"
+                                    data-toggle-aux-thread="${row.rowThreadId}"
+                                    data-toggle-aux-turn="${row.turn.turnId}"
                                     data-toggle-aux-panel="commands"
-                                  >Commands (${commandBlocks.length})</button>
+                                  >Commands (${row.commandBlocks.length})</button>
                                 `
                                 : ""
                             }
@@ -467,8 +279,8 @@ export function renderTranscript(container, state, handlers) {
                         `
                         : ""
                     }
-                    ${renderAuxPanel(auxPanel, reasoningBlocks, commandBlocks)}
-                    ${renderContextSummary(state, contextLinks)}
+                    ${renderAuxPanel(row.auxPanel, row.reasoningBlocks, row.commandBlocks)}
+                    ${renderContextSummary(row.contextSummaryItems)}
                   </section>
                 </div>
               </article>
@@ -478,36 +290,30 @@ export function renderTranscript(container, state, handlers) {
       </div>
       <section class="transcript-composer">
         <div class="transcript-composer-intent">
-          ${composerDisabledReason || (
-            forcedBranchActive && selectedTurn
-              ? `Branch from T${selectedTurn.idx}`
-              : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
-                ? `Reply from T${selectedTurn.idx} to branch`
-                : `Continue ${escapeHtml(branchLabel)}`
-          )}
+          ${escapeHtml(renderComposerIntent(vm))}
         </div>
         <form data-transcript-composer-form="1" class="composer-form">
           <div class="composer-input-shell">
             <textarea
               data-transcript-composer-input="1"
               rows="4"
-              ${composerDisabled ? "disabled" : ""}
+              ${vm.composerDisabled ? "disabled" : ""}
               placeholder="${escapeHtml(
-                composerDisabled
-                  ? composerDisabledReason
-                  : forcedBranchActive && selectedTurn
-                    ? `Create a new branch from T${selectedTurn.idx}...`
-                    : selectedTurn && headTurn?.turnId !== selectedTurn.turnId
-                      ? `Send from T${selectedTurn.idx} to create a new branch...`
+                vm.composerDisabled
+                  ? vm.composerDisabledReason
+                  : vm.forcedBranchActive && vm.selectedTurn
+                    ? `Create a new branch from T${vm.selectedTurn.idx}...`
+                    : vm.selectedTurn && vm.headTurn?.turnId !== vm.selectedTurn.turnId
+                      ? `Send from T${vm.selectedTurn.idx} to create a new branch...`
                       : "Send the next message on this branch...",
               )}"
             ></textarea>
             <div class="composer-actions">
               <button data-delete-conversation-button="1" class="danger-button" type="button">Delete</button>
-              <button class="primary-button" type="submit" ${composerDisabled ? "disabled" : ""}>Send</button>
+              <button class="primary-button" type="submit" ${vm.composerDisabled ? "disabled" : ""}>Send</button>
             </div>
           </div>
-          ${composerDisabled && !busyTurnNeedsApproval ? '<div class="composer-stop-row"><button data-interrupt-turn-button="1" class="ghost-button" type="button">Stop</button></div>' : ""}
+          ${vm.composerDisabled && !vm.busyTurnNeedsApproval ? '<div class="composer-stop-row"><button data-interrupt-turn-button="1" class="ghost-button" type="button">Stop</button></div>' : ""}
         </form>
       </section>
     </section>
@@ -557,15 +363,15 @@ export function renderTranscript(container, state, handlers) {
   });
 
   container.querySelector("[data-delete-conversation-button]")?.addEventListener("click", () => {
-    handlers.onDeleteConversation(selectedNode?.conversationId || thread.threadId);
+    handlers.onDeleteConversation(vm.selectedNode?.conversationId || vm.thread.threadId);
   });
   container.querySelector("[data-interrupt-turn-button]")?.addEventListener("click", async () => {
-    await handlers.onInterrupt(thread.threadId);
+    await handlers.onInterrupt(vm.thread.threadId);
   });
 
   container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (composerDisabled) {
+    if (vm.composerDisabled) {
       return;
     }
     const input = container.querySelector("[data-transcript-composer-input]");
@@ -573,11 +379,11 @@ export function renderTranscript(container, state, handlers) {
     if (!text) {
       return;
     }
-    await handlers.onSubmit(selectedNode || { thread, turn: selectedTurn, conversationId: thread.threadId }, text);
+    await handlers.onSubmit(vm.selectedNode || { thread: vm.thread, turn: vm.selectedTurn, conversationId: vm.thread.threadId }, text);
     if (input) {
       input.value = "";
     }
   });
 
-  requestAnimationFrame(() => syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTurn));
+  requestAnimationFrame(() => syncTranscriptFeed(container, vm.selectedNode, vm.selectedTurn, vm.headTurn));
 }

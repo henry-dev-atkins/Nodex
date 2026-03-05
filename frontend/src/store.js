@@ -19,18 +19,36 @@ function nodeExists(state, nodeId) {
   return Boolean(getTurns(state, threadId).find((turn) => turn.turnId === turnId));
 }
 
+function ensureTranscriptUiEntry(state, nodeId) {
+  if (!state.transcriptUiByNode[nodeId]) {
+    state.transcriptUiByNode[nodeId] = {
+      userExpanded: false,
+      assistantExpanded: false,
+      openAux: null,
+    };
+  }
+  return state.transcriptUiByNode[nodeId];
+}
+
+function maybeDropTranscriptUiEntry(state, nodeId) {
+  const entry = state.transcriptUiByNode[nodeId];
+  if (!entry) {
+    return;
+  }
+  if (!entry.userExpanded && !entry.assistantExpanded && !entry.openAux) {
+    delete state.transcriptUiByNode[nodeId];
+  }
+}
+
 function ensureSelection(state) {
   const roots = getConversationRoots(state);
   if (!roots.length) {
     state.selectedConversationId = null;
     state.selectedThreadId = null;
     state.selectedNodeId = null;
-    state.expandedTurnKey = null;
     state.forcedBranchNodeId = null;
     state.pendingMergeSourceNodeId = null;
-    state.userExpandedByNode = {};
-    state.assistantExpandedByNode = {};
-    state.auxPanelByNode = {};
+    state.transcriptUiByNode = {};
     state.compare = {
       open: false,
       leftNodeId: null,
@@ -66,34 +84,28 @@ function ensureSelection(state) {
     }
   }
 
-  if (state.expandedTurnKey && !nodeExists(state, state.expandedTurnKey)) {
-    state.expandedTurnKey = null;
-  }
   if (state.forcedBranchNodeId && !nodeExists(state, state.forcedBranchNodeId)) {
     state.forcedBranchNodeId = null;
   }
   if (state.pendingMergeSourceNodeId && !nodeExists(state, state.pendingMergeSourceNodeId)) {
     state.pendingMergeSourceNodeId = null;
   }
-  for (const nodeId of Object.keys(state.userExpandedByNode || {})) {
+  for (const nodeId of Object.keys(state.transcriptUiByNode || {})) {
     if (!nodeExists(state, nodeId)) {
-      delete state.userExpandedByNode[nodeId];
-    }
-  }
-  for (const nodeId of Object.keys(state.assistantExpandedByNode || {})) {
-    if (!nodeExists(state, nodeId)) {
-      delete state.assistantExpandedByNode[nodeId];
-    }
-  }
-  for (const nodeId of Object.keys(state.auxPanelByNode || {})) {
-    if (!nodeExists(state, nodeId)) {
-      delete state.auxPanelByNode[nodeId];
+      delete state.transcriptUiByNode[nodeId];
       continue;
     }
-    const panel = state.auxPanelByNode[nodeId];
-    if (panel !== "reasoning" && panel !== "commands") {
-      delete state.auxPanelByNode[nodeId];
+    const entry = ensureTranscriptUiEntry(state, nodeId);
+    if (entry.openAux !== "reasoning" && entry.openAux !== "commands" && entry.openAux !== null) {
+      entry.openAux = null;
     }
+    if (typeof entry.userExpanded !== "boolean") {
+      entry.userExpanded = false;
+    }
+    if (typeof entry.assistantExpanded !== "boolean") {
+      entry.assistantExpanded = false;
+    }
+    maybeDropTranscriptUiEntry(state, nodeId);
   }
   if (state.compare.leftNodeId && !nodeExists(state, state.compare.leftNodeId)) {
     state.compare.leftNodeId = null;
@@ -194,10 +206,7 @@ export function createStore() {
     selectedConversationId: null,
     selectedThreadId: null,
     selectedNodeId: null,
-    expandedTurnKey: null,
-    userExpandedByNode: {},
-    assistantExpandedByNode: {},
-    auxPanelByNode: {},
+    transcriptUiByNode: {},
     viewMode: "focus",
     composerFocusNonce: 0,
     forcedBranchNodeId: null,
@@ -314,20 +323,14 @@ export function createStore() {
       ensureModalState(state);
       emit();
     },
-    toggleTurnExpanded(threadId, turnId) {
-      const key = getNodeId(threadId, turnId);
-      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
-      state.selectedThreadId = threadId;
-      state.selectedNodeId = key;
-      state.expandedTurnKey = state.expandedTurnKey === key ? null : key;
-      emit();
-    },
     toggleUserExpanded(threadId, turnId) {
       const key = getNodeId(threadId, turnId);
       state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
       state.selectedThreadId = threadId;
       state.selectedNodeId = key;
-      state.userExpandedByNode[key] = !state.userExpandedByNode[key];
+      const entry = ensureTranscriptUiEntry(state, key);
+      entry.userExpanded = !entry.userExpanded;
+      maybeDropTranscriptUiEntry(state, key);
       emit();
     },
     toggleAssistantExpanded(threadId, turnId) {
@@ -335,12 +338,9 @@ export function createStore() {
       state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
       state.selectedThreadId = threadId;
       state.selectedNodeId = key;
-      state.assistantExpandedByNode[key] = !state.assistantExpandedByNode[key];
-      emit();
-    },
-    setAssistantExpanded(threadId, turnId, expanded) {
-      const key = getNodeId(threadId, turnId);
-      state.assistantExpandedByNode[key] = Boolean(expanded);
+      const entry = ensureTranscriptUiEntry(state, key);
+      entry.assistantExpanded = !entry.assistantExpanded;
+      maybeDropTranscriptUiEntry(state, key);
       emit();
     },
     toggleTurnAuxPanel(threadId, turnId, panel) {
@@ -349,12 +349,13 @@ export function createStore() {
       state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
       state.selectedThreadId = threadId;
       state.selectedNodeId = key;
-      const current = state.auxPanelByNode[key];
-      if (current === normalizedPanel || !normalizedPanel) {
-        delete state.auxPanelByNode[key];
+      const entry = ensureTranscriptUiEntry(state, key);
+      if (entry.openAux === normalizedPanel || !normalizedPanel) {
+        entry.openAux = null;
       } else {
-        state.auxPanelByNode[key] = normalizedPanel;
+        entry.openAux = normalizedPanel;
       }
+      maybeDropTranscriptUiEntry(state, key);
       emit();
     },
     setViewMode(mode) {
