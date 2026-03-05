@@ -45,7 +45,7 @@ Branch creation replays lineage from persisted turn snapshots with event-derived
 
 ## Architecture
 
-- `backend/`: FastAPI app, SQLite persistence, Codex process/session management, REST API, WebSocket hub, tests
+- `backend/`: FastAPI app, SQLite persistence, Codex process/session management, REST API, WebSocket hub, tests, plus dedicated history services (`response_history.py`, `turn_history.py`), lifecycle helpers (`lifecycle_service.py`), conversation CRUD helpers (`conversation_service.py`), turn-execution helpers (`turn_execution_service.py`), turn-record helpers (`turn_record_service.py`), thread payload helpers (`thread_params_service.py`), schema contract helpers (`schema_contract_service.py`), branch/fork helpers (`branching_service.py`), import helpers (`import_service.py`), approval helpers (`approval_service.py`), merge-context helpers (`merge_context_service.py`), temporary preview helpers (`temporary_preview_service.py`), thread snapshot/status helpers (`thread_snapshot_service.py`), session policy helpers (`session_policy.py`), session runtime bootstrap helpers (`session_runtime.py`), maintenance helpers (`maintenance_service.py`), event-stream helpers (`event_stream_service.py`), notification side-effect handling helpers (`notification_effects.py`), and session recovery helpers (`session_recovery.py`) that keep transcript/history/session decisions separate from session orchestration
 - `frontend/`: static HTML/CSS/ES module UI served by the backend
 - `backend/tests/fixtures/schema/`: test-only Codex schema fixture used by the fake CLI harness
 - `SECURITY.md`: local-only and token-auth rules
