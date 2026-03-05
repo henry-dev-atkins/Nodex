@@ -2,16 +2,30 @@ import { apiDelete, apiPost } from "./api.js";
 import { getHeadTurn, parseNodeId } from "./selectors.js";
 
 export function createUiActions(store) {
+  async function createBranchThread(state, node, headTurn) {
+    const forcedAnchor = state.forcedBranchNodeId ? parseNodeId(state.forcedBranchNodeId) : null;
+    const sourceThreadId = forcedAnchor?.threadId || node.thread.threadId;
+    const sourceHeadTurn = getHeadTurn(state, sourceThreadId);
+    const anchorTurnId = forcedAnchor?.turnId || node.turn?.turnId || sourceHeadTurn?.turnId || headTurn?.turnId || null;
+    if (!anchorTurnId) {
+      throw new Error("No branch anchor turn available");
+    }
+    if (sourceHeadTurn?.turnId === anchorTurnId) {
+      return apiPost(`/api/threads/${sourceThreadId}/fork`, { title: null });
+    }
+    return apiPost(`/api/threads/${sourceThreadId}/branch`, {
+      turnId: anchorTurnId,
+      title: null,
+    });
+  }
+
   async function submitFromNode(node, text) {
     const state = store.getState();
-    const forcedBranch = state.forcedBranchNodeId && state.forcedBranchNodeId === node.nodeId;
+    const forcedBranch = Boolean(state.forcedBranchNodeId);
     const headTurn = getHeadTurn(state, node.thread.threadId);
     const shouldBranch = Boolean((node.turn && headTurn?.turnId !== node.turn.turnId) || forcedBranch);
     if (shouldBranch) {
-      const response = await apiPost(`/api/threads/${node.thread.threadId}/branch`, {
-        turnId: node.turn?.turnId || headTurn?.turnId,
-        title: null,
-      });
+      const response = await createBranchThread(state, node, headTurn);
       const branchTurns = response.turns || [];
       store.applyThread(response.thread);
       store.applyTurns(branchTurns);

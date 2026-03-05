@@ -584,8 +584,7 @@ def test_branch_from_turn_and_delete_conversation() -> None:
                     branch_payload = branch.json()
                     assert branch_payload["thread"]["parentThreadId"] == thread["threadId"]
                     assert branch_payload["thread"]["forkedFromTurnId"] == first_turn["turnId"]
-                    assert [item["idx"] for item in branch_payload["turns"]] == [1]
-                    assert branch_payload["turns"][0]["userText"] == "Please require approval for this fake file change."
+                    assert branch_payload["turns"] == []
 
                     deleted = client.delete(f"/api/conversations/{thread['threadId']}", headers=headers)
                     assert deleted.status_code == 200

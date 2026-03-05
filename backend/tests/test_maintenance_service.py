@@ -28,10 +28,19 @@ class FakeRpc:
         self.closed += 1
 
 
-def make_session(process_key: str, thread_id: str, last_used: float) -> CodexSession:
+class HangingRpc:
+    def __init__(self) -> None:
+        self.close_started = False
+
+    async def close(self) -> None:
+        self.close_started = True
+        await asyncio.Event().wait()
+
+
+def make_session(process_key: str, thread_id: str, last_used: float, rpc: FakeRpc | HangingRpc | None = None) -> CodexSession:
     return CodexSession(
         process_key=process_key,
-        rpc=FakeRpc(),
+        rpc=rpc or FakeRpc(),
         local_thread_id=thread_id,
         thread_id=thread_id,
         last_used_monotonic=last_used,
@@ -154,6 +163,31 @@ def test_housekeeping_step_deletes_expired_previews_and_evicts_idle_sessions() -
         assert db.get_import_preview("preview-1") is None
         assert "thread-old" not in sessions
         assert session.rpc.closed == 1
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_retire_session_does_not_hang_when_rpc_close_blocks() -> None:
+    temp_root = make_temp_root()
+    db = Database(temp_root / "maintenance.db")
+    try:
+        hanging = HangingRpc()
+        session = make_session("s-timeout", "thread-timeout", 10.0, rpc=hanging)
+        sessions = {session.local_thread_id: session}
+        service = MaintenanceService(
+            db,
+            sessions=sessions,
+            session_lock=asyncio.Lock(),
+            session_idle_ttl_s=600,
+            session_close_timeout_s=0.01,
+        )
+
+        asyncio.run(asyncio.wait_for(service.retire_session(session), timeout=0.2))
+
+        assert hanging.close_started is True
+        assert "thread-timeout" not in sessions
+        assert session.intentional_close is True
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)

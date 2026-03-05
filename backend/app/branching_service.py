@@ -58,6 +58,7 @@ class BranchingService:
     async def fork_thread(self, thread_id: str, title: str | None = None) -> ThreadRecord:
         parent_session = await self._get_or_resume_session(thread_id)
         parent_turn_id = self.db.get_last_turn_id(thread_id)
+        replayed_turn_count = len(self.db.list_turns(thread_id))
         result = await parent_session.rpc.request_with_retry(
             "thread/fork",
             {"threadId": parent_session.thread_id or thread_id, "persistExtendedHistory": True},
@@ -71,13 +72,14 @@ class BranchingService:
             self._thread_resume_params(child_thread_id, None),
             timeout_s=60,
         )
+        resumed_thread = self._trim_replayed_turns(resumed_result["thread"], replayed_turn_count)
         resumed.local_thread_id = child_thread_id
         resumed.thread_id = child_thread_id
         resumed.last_used_monotonic = self._monotonic_time()
         async with self._session_lock:
             self._sessions[child_thread_id] = resumed
         thread_record = self._sync_thread_snapshot(
-            resumed_result["thread"],
+            resumed_thread,
             thread_id,
             parent_turn_id,
             title,
@@ -103,10 +105,9 @@ class BranchingService:
                 status_code=404,
                 detail={"error": {"code": "thread_not_found", "message": f"Unknown thread: {thread_id}", "details": {}}},
             )
-        history = self._history_from_turn_snapshots(
-            self._lineage_turn_snapshots(thread_id, turn_id, False),
-            False,
-        )
+        lineage_turns = self._lineage_turn_snapshots(thread_id, turn_id, False)
+        replayed_turn_count = len(lineage_turns)
+        history = self._history_from_turn_snapshots(lineage_turns, False)
         if not history:
             raise HTTPException(
                 status_code=409,
@@ -120,10 +121,13 @@ class BranchingService:
             )
         child_session = await self._spawn_session()
         try:
-            resumed = await child_session.rpc.request_with_retry(
-                "thread/resume",
-                self._thread_resume_params(self._remote_thread_id(parent_thread), history),
-                timeout_s=60,
+            resumed = await asyncio.wait_for(
+                child_session.rpc.request_with_retry(
+                    "thread/resume",
+                    self._thread_resume_params(self._remote_thread_id(parent_thread), history),
+                    timeout_s=60,
+                ),
+                timeout=65,
             )
         except TimeoutError as exc:
             await self._retire_session(child_session)
@@ -156,10 +160,13 @@ class BranchingService:
         child_session.last_used_monotonic = self._monotonic_time()
         if not child_thread.get("turns"):
             try:
-                read_result = await child_session.rpc.request_with_retry(
-                    "thread/read",
-                    {"threadId": child_thread_id, "includeTurns": True},
-                    timeout_s=60,
+                read_result = await asyncio.wait_for(
+                    child_session.rpc.request_with_retry(
+                        "thread/read",
+                        {"threadId": child_thread_id, "includeTurns": True},
+                        timeout_s=60,
+                    ),
+                    timeout=65,
                 )
             except TimeoutError as exc:
                 await self._retire_session(child_session)
@@ -188,18 +195,7 @@ class BranchingService:
             read_thread = read_result.get("thread")
             if isinstance(read_thread, dict):
                 child_thread = read_thread
-        if not child_thread.get("turns"):
-            await self._retire_session(child_session)
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": {
-                        "code": "branch_snapshot_empty",
-                        "message": "Branch creation returned no replayable turns",
-                        "details": {},
-                    }
-                },
-            )
+        child_thread = self._trim_replayed_turns(child_thread, replayed_turn_count)
         async with self._session_lock:
             self._sessions[child_thread_id] = child_session
         thread_record = self._sync_thread_snapshot(
@@ -210,3 +206,10 @@ class BranchingService:
         )
         await self.ws.emit_thread_forked(thread_record, turns=self.db.list_turns(child_thread_id))
         return thread_record
+
+    def _trim_replayed_turns(self, codex_thread: dict[str, Any], replayed_turn_count: int) -> dict[str, Any]:
+        turns = codex_thread.get("turns")
+        if replayed_turn_count <= 0 or not isinstance(turns, list):
+            return codex_thread
+        start_index = min(replayed_turn_count, len(turns))
+        return {**codex_thread, "turns": turns[start_index:]}

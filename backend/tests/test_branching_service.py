@@ -233,7 +233,7 @@ def test_branch_from_turn_reads_thread_snapshot_when_resume_is_empty() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
-def test_branch_from_turn_rejects_empty_snapshot_after_read() -> None:
+def test_branch_from_turn_drops_replayed_snapshot_when_resume_and_read_are_empty() -> None:
     temp_root = make_temp_root()
     db = Database(temp_root / "branching.db")
     ws = FakeWs()
@@ -270,6 +270,30 @@ def test_branch_from_turn_rejects_empty_snapshot_after_read() -> None:
         async def retire_session(session) -> None:
             retired.append(session.process_key)
 
+        def sync_thread_snapshot(thread: dict[str, object], parent: str | None, forked: str | None, title: str | None) -> ThreadRecord:
+            record = ThreadRecord(
+                threadId="child-thread",
+                title=title or "Child",
+                createdAt=now,
+                updatedAt=now,
+                parentThreadId=parent,
+                forkedFromTurnId=forked,
+            )
+            db.upsert_thread(record)
+            for idx, turn_payload in enumerate(thread.get("turns", []), start=1):
+                db.upsert_turn(
+                    TurnRecord(
+                        turnId=str(turn_payload.get("id", f"turn-{idx}")),
+                        threadId=record.threadId,
+                        idx=idx,
+                        userText="synthesized",
+                        status=str(turn_payload.get("status", "completed")),
+                        startedAt=now,
+                        metadata={"items": turn_payload.get("items", [])},
+                    )
+                )
+            return record
+
         service = make_branching_service(
             db,
             ws,
@@ -280,23 +304,94 @@ def test_branch_from_turn_rejects_empty_snapshot_after_read() -> None:
             retire_session=retire_session,
             thread_resume_params=lambda thread_id, history: {"threadId": thread_id, "history": history},
             remote_thread_id=lambda thread: thread.threadId,
-            sync_thread_snapshot=lambda _thread, _parent, _forked, _title: ThreadRecord(
-                threadId="child-thread",
-                title="Child",
-                createdAt=now,
-                updatedAt=now,
-            ),
+            sync_thread_snapshot=sync_thread_snapshot,
             lineage_turn_snapshots=lambda _thread_id, _upto, _include_error: [{"id": "turn-1", "items": []}],
             history_from_turn_snapshots=lambda _turns, _include_tool_calls: [{"type": "message", "role": "user", "content": []}],
         )
 
-        try:
-            asyncio.run(service.branch_from_turn("root", "turn-1"))
-            raise AssertionError("Expected branch_snapshot_empty")
-        except HTTPException as exc:
-            assert exc.status_code == 502
-            assert exc.detail["error"]["code"] == "branch_snapshot_empty"
-        assert retired == ["child"]
+        result = asyncio.run(service.branch_from_turn("root", "turn-1"))
+        assert result.threadId == "child-thread"
+        assert retired == []
+        assert sessions["child-thread"] is child_session
+        stored_turns = db.list_turns("child-thread")
+        assert len(stored_turns) == 0
+        assert any(call[0] == "thread/read" for call in child_session.rpc.calls)
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_branch_from_turn_allows_empty_snapshot_when_history_exists_without_lineage_turns() -> None:
+    temp_root = make_temp_root()
+    db = Database(temp_root / "branching.db")
+    ws = FakeWs()
+    sessions: dict[str, CodexSession] = {}
+    session_lock = asyncio.Lock()
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(
+            TurnRecord(
+                turnId="turn-1",
+                threadId="root",
+                idx=1,
+                userText="prompt",
+                status="completed",
+                startedAt=now,
+            )
+        )
+
+        async def child_handler(method: str, _params: dict[str, object], _timeout_s: int):
+            if method in {"thread/resume", "thread/read"}:
+                return {"thread": {"id": "child-thread", "createdAt": 0, "updatedAt": 0, "turns": []}}
+            raise AssertionError(f"Unexpected method {method}")
+
+        child_session = CodexSession(process_key="child", rpc=RpcStub(child_handler))
+        retired: list[str] = []
+
+        async def get_or_resume_session(_thread_id: str):
+            raise AssertionError("Not expected for branch_from_turn")
+
+        async def spawn_session():
+            return child_session
+
+        async def retire_session(session) -> None:
+            retired.append(session.process_key)
+
+        def sync_thread_snapshot(thread: dict[str, object], parent: str | None, forked: str | None, title: str | None) -> ThreadRecord:
+            record = ThreadRecord(
+                threadId=str(thread["id"]),
+                title=title or "Child",
+                createdAt=now,
+                updatedAt=now,
+                parentThreadId=parent,
+                forkedFromTurnId=forked,
+            )
+            db.upsert_thread(record)
+            return record
+
+        service = make_branching_service(
+            db,
+            ws,
+            sessions,
+            session_lock,
+            get_or_resume_session=get_or_resume_session,
+            spawn_session=spawn_session,
+            retire_session=retire_session,
+            thread_resume_params=lambda thread_id, history: {"threadId": thread_id, "history": history},
+            remote_thread_id=lambda thread: thread.threadId,
+            sync_thread_snapshot=sync_thread_snapshot,
+            lineage_turn_snapshots=lambda _thread_id, _upto, _include_error: [],
+            history_from_turn_snapshots=lambda _turns, _include_tool_calls: [{"type": "message", "role": "user", "content": []}],
+        )
+
+        result = asyncio.run(service.branch_from_turn("root", "turn-1"))
+        assert result.threadId == "child-thread"
+        assert result.parentThreadId == "root"
+        assert result.forkedFromTurnId == "turn-1"
+        assert retired == []
+        assert sessions["child-thread"] is child_session
+        assert any(call[0] == "thread/read" for call in child_session.rpc.calls)
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)

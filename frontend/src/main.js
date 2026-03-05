@@ -297,7 +297,7 @@ function renderViews(state) {
         return;
       }
       const anchorTurn = selectedNode?.thread?.threadId === selectedThread.threadId
-        ? selectedNode?.turn
+        ? selectedNode?.turn || getHeadTurn(state, selectedThread.threadId)
         : getHeadTurn(state, selectedThread.threadId);
       if (!anchorTurn) {
         store.requestComposerFocus();

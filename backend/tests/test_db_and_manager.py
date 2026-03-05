@@ -480,7 +480,7 @@ def test_branch_from_turn_rejects_when_history_is_unavailable() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
-def test_branch_from_turn_reads_thread_snapshot_when_resume_is_empty() -> None:
+def test_branch_from_turn_reads_thread_snapshot_when_resume_is_empty_and_trims_replay() -> None:
     temp_root = make_temp_root()
     settings = make_settings(temp_root)
     db = Database(settings.db_path)
@@ -560,14 +560,14 @@ def test_branch_from_turn_reads_thread_snapshot_when_resume_is_empty() -> None:
         assert result.parentThreadId == "root"
         assert result.forkedFromTurnId == "turn-1"
         child_turns = db.list_turns("child-thread")
-        assert [turn.turnId for turn in child_turns] == ["child-turn-1"]
+        assert child_turns == []
         assert any(method == "thread/read" for method, _params in rpc.calls)
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
-def test_branch_from_turn_rejects_empty_snapshot_after_read() -> None:
+def test_branch_from_turn_keeps_child_snapshot_empty_when_resume_and_read_are_empty() -> None:
     temp_root = make_temp_root()
     settings = make_settings(temp_root)
     db = Database(settings.db_path)
@@ -621,14 +621,15 @@ def test_branch_from_turn_rejects_empty_snapshot_after_read() -> None:
         manager._spawn_session = fake_spawn_session  # type: ignore[method-assign]
         manager._retire_session = fake_retire_session  # type: ignore[method-assign]
 
-        try:
-            asyncio.run(manager.branch_from_turn("root", "turn-1"))
-            raise AssertionError("Expected branch_from_turn to fail when branch snapshot has no turns")
-        except HTTPException as exc:
-            assert exc.status_code == 502
-            assert exc.detail["error"]["code"] == "branch_snapshot_empty"
-        assert retired == ["proc-branch"]
-        assert db.get_thread("child-thread") is None
+        result = asyncio.run(manager.branch_from_turn("root", "turn-1"))
+        assert result.threadId == "child-thread"
+        assert result.parentThreadId == "root"
+        assert result.forkedFromTurnId == "turn-1"
+        assert retired == []
+        stored = db.get_thread("child-thread")
+        assert stored is not None
+        child_turns = db.list_turns("child-thread")
+        assert child_turns == []
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)
