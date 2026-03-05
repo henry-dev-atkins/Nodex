@@ -7,13 +7,6 @@ Local-only wrapper around `codex app-server` with:
 - Browser UI for conversation selection, direct DAG-driven child-turn creation, chat-style transcripts, and inline approvals
 - Explicit approval flow only, never auto-approved
 
-## Design Docs
-
-- Current redesign target: [docs/UI_REDESIGN_SPEC.md](docs/UI_REDESIGN_SPEC.md)
-- Execution plan: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
-
-The README describes the current shipped behavior. The spec and implementation plan record the design constraints and execution structure behind the current UI.
-
 ## Terms
 
 - Conversation: the full tree rooted at the first branch.
