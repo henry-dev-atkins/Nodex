@@ -1,5 +1,10 @@
 # Codex UI Wrapper
 
+AI chatbots are usually linear, and so context is wasted on follow-up questions and digressions. 
+I try to transform linear AI conversations into graphs, allowing users to branch, compare, and recombine reasoning without losing context. 
+The user can experiment safely, track reasoning paths, and reuse useful context rather than restarting, manually copying information between chats or suffering context bloat. 
+The result is a workflow *closer* to version control for AI thinking.
+
 Local-only wrapper around `codex app-server` with:
 
 - FastAPI REST API plus WebSocket replay/live stream
