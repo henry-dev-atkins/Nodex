@@ -236,6 +236,7 @@ export function createStore() {
       loading: false,
       error: "",
     },
+    submitInFlight: false,
     errorMessage: "",
   };
 
@@ -269,6 +270,10 @@ export function createStore() {
     },
     setErrorMessage(message) {
       state.errorMessage = message;
+      emit();
+    },
+    setSubmitInFlight(inFlight) {
+      state.submitInFlight = Boolean(inFlight);
       emit();
     },
     clearErrorMessage() {

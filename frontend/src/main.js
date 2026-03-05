@@ -296,15 +296,14 @@ function renderViews(state) {
       if (!selectedThread) {
         return;
       }
-      const anchorTurn = selectedNode?.thread?.threadId === selectedThread.threadId
-        ? selectedNode?.turn || getHeadTurn(state, selectedThread.threadId)
-        : getHeadTurn(state, selectedThread.threadId);
-      if (!anchorTurn) {
+      const anchorThreadId = selectedNode?.turn?.threadId || selectedThread.threadId;
+      const anchorTurn = selectedNode?.turn || getHeadTurn(state, anchorThreadId);
+      if (!anchorTurn || !anchorThreadId) {
         store.requestComposerFocus();
         return;
       }
       store.clearPendingMerge();
-      store.armBranchFromNode(selectedThread.threadId, anchorTurn.turnId);
+      store.armBranchFromNode(anchorThreadId, anchorTurn.turnId);
     },
     onMerge() {
       if (!selectedNode?.turn) {

@@ -178,9 +178,14 @@ export function renderTranscript(container, state, handlers) {
         <section class="transcript-composer">
           <form data-transcript-composer-form="1" class="composer-form">
             <div class="composer-input-shell">
-              <textarea data-transcript-composer-input="1" rows="4" placeholder="Start the first turn on this branch..."></textarea>
+              <textarea
+                data-transcript-composer-input="1"
+                rows="4"
+                ${vm.composerDisabled ? "disabled" : ""}
+                placeholder="${escapeHtml(vm.composerDisabled ? vm.composerDisabledReason : "Start the first turn on this branch...")}"
+              ></textarea>
               <div class="composer-actions">
-                <button class="primary-button" type="submit">Send</button>
+                <button class="primary-button" type="submit" ${vm.composerDisabled ? "disabled" : ""}>Send</button>
               </div>
             </div>
           </form>
@@ -190,6 +195,9 @@ export function renderTranscript(container, state, handlers) {
 
     container.querySelector("[data-transcript-composer-form]")?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (vm.composerDisabled) {
+        return;
+      }
       const input = container.querySelector("[data-transcript-composer-input]");
       const text = input?.value?.trim() || "";
       if (!text) {

@@ -2,16 +2,14 @@ import { apiDelete, apiPost } from "./api.js";
 import { getHeadTurn, parseNodeId } from "./selectors.js";
 
 export function createUiActions(store) {
+  let submitInFlightPromise = null;
+
   async function createBranchThread(state, node, headTurn) {
     const forcedAnchor = state.forcedBranchNodeId ? parseNodeId(state.forcedBranchNodeId) : null;
     const sourceThreadId = forcedAnchor?.threadId || node.thread.threadId;
-    const sourceHeadTurn = getHeadTurn(state, sourceThreadId);
-    const anchorTurnId = forcedAnchor?.turnId || node.turn?.turnId || sourceHeadTurn?.turnId || headTurn?.turnId || null;
+    const anchorTurnId = forcedAnchor?.turnId || node.turn?.turnId || getHeadTurn(state, sourceThreadId)?.turnId || headTurn?.turnId || null;
     if (!anchorTurnId) {
       throw new Error("No branch anchor turn available");
-    }
-    if (sourceHeadTurn?.turnId === anchorTurnId) {
-      return apiPost(`/api/threads/${sourceThreadId}/fork`, { title: null });
     }
     return apiPost(`/api/threads/${sourceThreadId}/branch`, {
       turnId: anchorTurnId,
@@ -20,22 +18,45 @@ export function createUiActions(store) {
   }
 
   async function submitFromNode(node, text) {
-    const state = store.getState();
-    const forcedBranch = Boolean(state.forcedBranchNodeId);
-    const headTurn = getHeadTurn(state, node.thread.threadId);
-    const shouldBranch = Boolean((node.turn && headTurn?.turnId !== node.turn.turnId) || forcedBranch);
-    if (shouldBranch) {
-      const response = await createBranchThread(state, node, headTurn);
-      const branchTurns = response.turns || [];
-      store.applyThread(response.thread);
-      store.applyTurns(branchTurns);
-      store.selectNode(response.thread.threadId, branchTurns.length ? branchTurns[branchTurns.length - 1].turnId : null);
-      store.clearBranchIntent();
-      await apiPost(`/api/threads/${response.thread.threadId}/turns`, { text });
-      return;
+    if (submitInFlightPromise) {
+      return submitInFlightPromise;
     }
-    store.clearBranchIntent();
-    await apiPost(`/api/threads/${node.thread.threadId}/turns`, { text });
+
+    const runSubmit = async () => {
+      const state = store.getState();
+      const forcedBranch = Boolean(state.forcedBranchNodeId);
+      const headTurn = getHeadTurn(state, node.thread.threadId);
+      const shouldBranch = Boolean((node.turn && headTurn?.turnId !== node.turn.turnId) || forcedBranch);
+      if (shouldBranch) {
+        const response = await createBranchThread(state, node, headTurn);
+        const branchTurns = response.turns || [];
+        store.applyThread(response.thread);
+        store.applyTurns(branchTurns);
+        store.selectNode(response.thread.threadId, branchTurns.length ? branchTurns[branchTurns.length - 1].turnId : null);
+        store.clearBranchIntent();
+        const turnResponse = await apiPost(`/api/threads/${response.thread.threadId}/turns`, { text });
+        if (turnResponse.turn) {
+          store.applyTurn(turnResponse.turn);
+          store.selectNode(turnResponse.turn.threadId, turnResponse.turn.turnId);
+        }
+        return;
+      }
+      store.clearBranchIntent();
+      const turnResponse = await apiPost(`/api/threads/${node.thread.threadId}/turns`, { text });
+      if (turnResponse.turn) {
+        store.applyTurn(turnResponse.turn);
+        store.selectNode(turnResponse.turn.threadId, turnResponse.turn.turnId);
+      }
+    };
+
+    store.setSubmitInFlight(true);
+    submitInFlightPromise = runSubmit();
+    try {
+      await submitInFlightPromise;
+    } finally {
+      submitInFlightPromise = null;
+      store.setSubmitInFlight(false);
+    }
   }
 
   async function interruptThread(threadId) {

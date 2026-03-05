@@ -468,3 +468,108 @@ def test_fork_thread_registers_child_session_and_emits_fork_event() -> None:
     finally:
         db.close()
         shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_fork_thread_trims_full_lineage_when_parent_branch_has_ancestors() -> None:
+    temp_root = make_temp_root()
+    db = Database(temp_root / "branching.db")
+    ws = FakeWs()
+    sessions: dict[str, CodexSession] = {}
+    session_lock = asyncio.Lock()
+    try:
+        now = utc_now()
+        db.upsert_thread(ThreadRecord(threadId="root", title="Root", createdAt=now, updatedAt=now))
+        db.upsert_turn(TurnRecord(turnId="root-turn-1", threadId="root", idx=1, userText="root", status="completed", startedAt=now))
+        db.upsert_thread(
+            ThreadRecord(
+                threadId="branch-1",
+                title="Branch 1",
+                createdAt=now,
+                updatedAt=now,
+                parentThreadId="root",
+                forkedFromTurnId="root-turn-1",
+            )
+        )
+        db.upsert_turn(
+            TurnRecord(turnId="branch-turn-1", threadId="branch-1", idx=1, userText="branch", status="completed", startedAt=now)
+        )
+
+        async def parent_handler(method: str, _params: dict[str, object], _timeout_s: int):
+            if method == "thread/fork":
+                return {"thread": {"id": "child-thread", "createdAt": 0, "updatedAt": 0, "turns": []}}
+            raise AssertionError(f"Unexpected method {method}")
+
+        async def child_handler(method: str, _params: dict[str, object], _timeout_s: int):
+            if method == "thread/resume":
+                return {
+                    "thread": {
+                        "id": "child-thread",
+                        "createdAt": 0,
+                        "updatedAt": 0,
+                        "turns": [
+                            {"id": "root-turn-1", "status": "completed", "items": []},
+                            {"id": "branch-turn-1", "status": "completed", "items": []},
+                        ],
+                    }
+                }
+            raise AssertionError(f"Unexpected method {method}")
+
+        parent_session = CodexSession(
+            process_key="parent",
+            rpc=RpcStub(parent_handler),
+            local_thread_id="branch-1",
+            thread_id="branch-1",
+        )
+        child_session = CodexSession(process_key="child", rpc=RpcStub(child_handler))
+        captured_turn_ids: list[str] = []
+
+        async def get_or_resume_session(thread_id: str):
+            assert thread_id == "branch-1"
+            return parent_session
+
+        async def spawn_session():
+            return child_session
+
+        async def retire_session(_session) -> None:
+            return None
+
+        def sync_thread_snapshot(thread: dict[str, object], parent: str | None, forked: str | None, title: str | None) -> ThreadRecord:
+            for turn in thread.get("turns", []):
+                captured_turn_ids.append(str(turn.get("id")))
+            record = ThreadRecord(
+                threadId=str(thread["id"]),
+                title=title or "Child",
+                createdAt=now,
+                updatedAt=now,
+                parentThreadId=parent,
+                forkedFromTurnId=forked,
+            )
+            db.upsert_thread(record)
+            return record
+
+        service = make_branching_service(
+            db,
+            ws,
+            sessions,
+            session_lock,
+            get_or_resume_session=get_or_resume_session,
+            spawn_session=spawn_session,
+            retire_session=retire_session,
+            thread_resume_params=lambda thread_id, history: {"threadId": thread_id, "history": history},
+            remote_thread_id=lambda thread: thread.threadId,
+            sync_thread_snapshot=sync_thread_snapshot,
+            lineage_turn_snapshots=lambda thread_id, _upto, _include_error: (
+                [{"id": "root-turn-1", "items": []}, {"id": "branch-turn-1", "items": []}] if thread_id == "branch-1" else []
+            ),
+            history_from_turn_snapshots=lambda _turns, _include_tool_calls: [],
+        )
+
+        result = asyncio.run(service.fork_thread("branch-1", title="Forked"))
+
+        assert result.threadId == "child-thread"
+        assert result.parentThreadId == "branch-1"
+        assert result.forkedFromTurnId == "branch-turn-1"
+        assert captured_turn_ids == []
+    finally:
+        db.close()
+        shutil.rmtree(temp_root, ignore_errors=True)

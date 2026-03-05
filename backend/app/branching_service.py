@@ -58,7 +58,8 @@ class BranchingService:
     async def fork_thread(self, thread_id: str, title: str | None = None) -> ThreadRecord:
         parent_session = await self._get_or_resume_session(thread_id)
         parent_turn_id = self.db.get_last_turn_id(thread_id)
-        replayed_turn_count = len(self.db.list_turns(thread_id))
+        lineage_turns = self._lineage_turn_snapshots(thread_id, parent_turn_id, False) if parent_turn_id else []
+        replayed_turn_count = len(lineage_turns)
         result = await parent_session.rpc.request_with_retry(
             "thread/fork",
             {"threadId": parent_session.thread_id or thread_id, "persistExtendedHistory": True},

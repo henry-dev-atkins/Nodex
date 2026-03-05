@@ -256,12 +256,14 @@ export function buildTranscriptViewModel(state) {
   const busyTurnNeedsApproval = busyTurn
     ? getApprovalsForTurn(state, thread.threadId, busyTurn.turnId).some((approval) => approval.status === "pending")
     : false;
-  const composerDisabled = Boolean(busyTurn);
+  const composerDisabled = Boolean(busyTurn || state.submitInFlight);
   const composerDisabledReason = busyTurn
     ? busyTurnNeedsApproval
       ? `Waiting for approval on T${busyTurn.idx}`
       : `Waiting for T${busyTurn.idx} to finish`
-    : "";
+    : state.submitInFlight
+      ? "Submitting turn..."
+      : "";
   return {
     hasThread: true,
     thread,

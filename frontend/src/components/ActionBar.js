@@ -9,6 +9,7 @@ export function renderActionBar(container, state, handlers) {
   const canBranch = Boolean(selectedThread && (selectedNode?.turn || headTurn));
   const canCompare = Boolean(hasTurn);
   const canMerge = Boolean(hasTurn);
+  const interactionLocked = Boolean(state.submitInFlight);
   const forcedBranchActive = state.forcedBranchNodeId && state.forcedBranchNodeId === selectedNode?.nodeId;
   const pendingMergeActive = state.pendingMergeSourceNodeId && state.pendingMergeSourceNodeId === selectedNode?.nodeId;
   const branchLabel = selectedThread ? getBranchLabel(state, selectedThread.threadId) : "Branch";
@@ -26,10 +27,10 @@ export function renderActionBar(container, state, handlers) {
         <span class="action-bar-summary">${escapeHtml(summary)}</span>
       </div>
       <div class="action-bar-buttons">
-        <button type="button" class="primary-button" data-action="continue" ${selectedThread ? "" : "disabled"}>Continue</button>
-        <button type="button" class="ghost-button ${forcedBranchActive ? "is-active" : ""}" data-action="branch" ${canBranch ? "" : "disabled"}>Branch</button>
-        <button type="button" class="ghost-button ${pendingMergeActive ? "is-active" : ""}" data-action="merge" ${canMerge ? "" : "disabled"}>${pendingMergeActive ? "Cancel Merge" : "Merge Into..."}</button>
-        <button type="button" class="ghost-button ${state.compare.open ? "is-active" : ""}" data-action="compare" ${canCompare ? "" : "disabled"}>${state.compare.open && state.compare.leftNodeId && !state.compare.rightNodeId ? "Set Compare" : "Compare"}</button>
+        <button type="button" class="primary-button" data-action="continue" ${selectedThread && !interactionLocked ? "" : "disabled"}>Continue</button>
+        <button type="button" class="ghost-button ${forcedBranchActive ? "is-active" : ""}" data-action="branch" ${canBranch && !interactionLocked ? "" : "disabled"}>Branch</button>
+        <button type="button" class="ghost-button ${pendingMergeActive ? "is-active" : ""}" data-action="merge" ${canMerge && !interactionLocked ? "" : "disabled"}>${pendingMergeActive ? "Cancel Merge" : "Merge Into..."}</button>
+        <button type="button" class="ghost-button ${state.compare.open ? "is-active" : ""}" data-action="compare" ${canCompare && !interactionLocked ? "" : "disabled"}>${state.compare.open && state.compare.leftNodeId && !state.compare.rightNodeId ? "Set Compare" : "Compare"}</button>
       </div>
     </section>
   `;
