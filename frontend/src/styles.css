@@ -8,10 +8,10 @@
   --surface-subtle: #2a2d2e;
   --surface-strong: #31363a;
   --graph-bg: #1f2324;
-  --line: #3c3c3c;
-  --line-strong: #4f4f4f;
-  --text: #d4d4d4;
-  --muted: #9da1a6;
+  --line: #45484d;
+  --line-strong: #5d646d;
+  --text: #e6edf3;
+  --muted: #b6bec8;
   --accent: #007acc;
   --accent-soft: #1f3850;
   --danger: #f48771;
@@ -1713,9 +1713,67 @@ body.is-resizing * {
   fill: #2d2d30;
 }
 
+.graph-node.is-lineage-node .graph-node-box {
+  fill: #34373d;
+  stroke: #5b6270;
+}
+
 .graph-node.selected .graph-node-box,
 .graph-node.is-link-target .graph-node-box {
   stroke: #6cb6ff;
+}
+
+.graph-node-title {
+  fill: #eef2f6;
+}
+
+.graph-node-preview {
+  fill: #ccd3db;
+}
+
+.graph-lane-label {
+  fill: #bcc4cd;
+}
+
+.graph-merge-diamond {
+  fill: #30353a;
+  stroke: #687480;
+}
+
+.graph-merge-label {
+  fill: #eef2f6;
+}
+
+.graph-primary-edge {
+  color: #5f748c;
+}
+
+.graph-primary-edge.is-branch-edge {
+  color: #4f5f72;
+}
+
+.graph-node.is-denied .graph-node-box {
+  stroke: #d78a7c;
+}
+
+.context-panel-header span,
+.compare-panel-header span,
+.context-chip-meta,
+.context-chip-preview,
+.compare-card-meta,
+.compare-card-section p,
+.transcript-composer-intent,
+.chat-turn-branch,
+.chat-turn-status {
+  color: #bcc4cd;
+}
+
+.context-chip-title,
+.compare-card-title,
+.chat-bubble-text,
+.chat-aux-item div,
+.chat-approval-copy strong {
+  color: #eef2f6;
 }
 
 .modal-backdrop {
