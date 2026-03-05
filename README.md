@@ -7,11 +7,25 @@ The user can experiment safely, track reasoning paths, and reuse useful context 
 The result is a workflow *closer* to version control for AI thinking. 
 
 
+## Current State
+Local only, solo coding tool. 
+
 ### UI Example
 
 
 ![UI Screenshot](images/dag_screenshot.png)
 
+
+## Features:
+The repo supports several workflows beyond “send prompt, get answer”:
+- create and continue conversations,
+- branch from any selected turn,
+- compare two turns side-by-side,
+- drag one node onto another to create a linked child turn,
+- merge a side branch back into another branch head,
+- delete empty branches from graph context,
+- approve or deny command/file-change requests,
+- import context through a preview-and-edit gate.
 
 Therefore, I have made a local-only wrapper around `codex app-server` with:
 - FastAPI REST API plus WebSocket replay/live stream
@@ -19,6 +33,8 @@ Therefore, I have made a local-only wrapper around `codex app-server` with:
 - Browser UI for conversation selection, direct DAG-driven child-turn creation, chat-style transcripts, and inline approvals
 - Explicit approval flow only, never auto-approved
 
+
+# AI Generated README:
 ## Terms
 
 - Conversation: the full tree rooted at the first branch.
