@@ -1,12 +1,19 @@
 # Codex UI Wrapper
 
+If you are anything like me, your conversations with AI often have decisions, questions, side-quests and contradictions alongside genuine prompts. 
 AI chatbots are usually linear, and so context is wasted on follow-up questions and digressions. 
 I try to transform linear AI conversations into graphs, allowing users to branch, compare, and recombine reasoning without losing context. 
 The user can experiment safely, track reasoning paths, and reuse useful context rather than restarting, manually copying information between chats or suffering context bloat. 
-The result is a workflow *closer* to version control for AI thinking.
+The result is a workflow *closer* to version control for AI thinking. 
 
-Local-only wrapper around `codex app-server` with:
 
+### UI Example
+
+
+![UI Screenshot](images/dag_screenshot.png)
+
+
+Therefore, I have made a local-only wrapper around `codex app-server` with:
 - FastAPI REST API plus WebSocket replay/live stream
 - SQLite persistence for threads, turns, events, approvals, and import previews
 - Browser UI for conversation selection, direct DAG-driven child-turn creation, chat-style transcripts, and inline approvals
