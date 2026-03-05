@@ -454,6 +454,36 @@ def test_fake_codex_harness_covers_deny_round_trip() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
+def test_unhandled_exception_response_sanitized() -> None:
+    temp_root = make_temp_root()
+    data_dir = temp_root / "data"
+    env = {
+        "CODEX_UI_DATA_DIR": str(data_dir),
+        "CODEX_UI_OPEN_BROWSER": "0",
+        "CODEX_UI_WORKSPACE_DIR": str(temp_root),
+    }
+    try:
+        with patched_env(env):
+            with patch("backend.app.codex_manager.CodexManager.verify_codex_installation", new=_noop), patch(
+                "backend.app.codex_manager.CodexManager.ensure_schema", new=_noop
+            ):
+                app = create_app()
+
+                @app.get("/__test_raise")
+                async def _test_raise() -> None:
+                    raise RuntimeError("sensitive backend failure details")
+
+                with TestClient(app, raise_server_exceptions=False) as client:
+                    response = client.get("/__test_raise")
+                    assert response.status_code == 500
+                    payload = response.json()
+                    assert payload["error"]["code"] == "internal_error"
+                    assert payload["error"]["message"] == "Internal server error"
+                    assert "sensitive backend failure details" not in json.dumps(payload)
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def test_branch_from_turn_and_delete_conversation() -> None:
     temp_root = make_temp_root()
     data_dir = temp_root / "data"

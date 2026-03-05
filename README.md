@@ -9,8 +9,8 @@ Local-only wrapper around `codex app-server` with:
 
 ## Design Docs
 
-- Current redesign target: [docs/UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrapper/docs/UI_REDESIGN_SPEC.md)
-- Execution plan: [docs/IMPLEMENTATION_PLAN.md](/C:/Users/Henry/PersonalProjects/codex-wrapper/docs/IMPLEMENTATION_PLAN.md)
+- Current redesign target: [docs/UI_REDESIGN_SPEC.md](docs/UI_REDESIGN_SPEC.md)
+- Execution plan: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
 
 The README describes the current shipped behavior. The spec and implementation plan record the design constraints and execution structure behind the current UI.
 

@@ -8,4 +8,8 @@ This project is local-only by design.
 - Approval policy: explicit user approval only
 - Import flow: preview and edit gate before copied context is submitted to another thread
 
-Report security issues privately to the project maintainer before public disclosure.
+Report vulnerabilities privately before any public disclosure:
+
+- GitHub Security Advisories: https://github.com/henry-dev-atkins/codex-wrapper/security/advisories/new
+
+We aim to acknowledge reports within 72 hours.

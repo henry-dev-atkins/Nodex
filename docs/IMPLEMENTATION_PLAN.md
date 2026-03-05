@@ -2,7 +2,7 @@
 
 This plan translates the v2 UI simplification spec into concrete workstreams.
 
-Source spec: [UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrapper/docs/UI_REDESIGN_SPEC.md)
+Source spec: [UI_REDESIGN_SPEC.md](UI_REDESIGN_SPEC.md)
 
 ## Objectives
 

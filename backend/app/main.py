@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket
@@ -14,6 +15,8 @@ from .security import build_token_dependency, load_or_create_session_token, veri
 from .settings import load_settings
 from .util import APP_NAME, APP_VERSION
 from .ws import WebSocketHub
+
+logger = logging.getLogger(__name__)
 
 
 def _no_cache_headers() -> dict[str, str]:
@@ -61,13 +64,14 @@ def create_app() -> FastAPI:
     app.include_router(build_api_router(db, manager, require_token))
 
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         if hasattr(exc, "status_code") and hasattr(exc, "detail"):
             detail = exc.detail if isinstance(exc.detail, dict) else {"error": {"code": "invalid_request", "message": str(exc.detail), "details": {}}}
             return JSONResponse(status_code=exc.status_code, content=detail)
+        logger.exception("Unhandled server exception on %s", request.url.path)
         return JSONResponse(
             status_code=500,
-            content={"error": {"code": "internal_error", "message": str(exc), "details": {}}},
+            content={"error": {"code": "internal_error", "message": "Internal server error", "details": {}}},
         )
 
     @app.get("/health")
