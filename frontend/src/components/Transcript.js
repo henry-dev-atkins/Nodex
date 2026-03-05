@@ -1,4 +1,4 @@
-import { buildBlocks, escapeHtml, formatText, humanizeTurnStatus, normalizeText, summarizeText, summarizeTurn, truncateText } from "../rendering.js";
+import { buildBlocks, escapeHtml, formatText, humanizeTurnStatus, normalizeText, summarizeTurn } from "../rendering.js";
 import {
   getApprovalsForTurn,
   getBranchLabel,
@@ -13,11 +13,7 @@ import {
   getTurns,
 } from "../selectors.js";
 
-function getTurnResponse(blocks, summary) {
-  const assistant = [...blocks].reverse().find((block) => block.kind === "assistant");
-  const commentary = [...blocks].reverse().find((block) => block.title === "Commentary");
-  return assistant?.plainText || commentary?.plainText || summary.preview || "No response captured yet.";
-}
+const CLAMP_LINE_COUNT = 2;
 
 function getStatusMark(turn, approvals) {
   if (approvals.some((approval) => approval.status === "pending")) {
@@ -26,10 +22,10 @@ function getStatusMark(turn, approvals) {
   const decided = approvals.filter((approval) => approval.status === "approve" || approval.status === "deny");
   const latest = decided[decided.length - 1];
   if (latest?.status === "approve") {
-    return { label: "&#10003;", tone: "is-ok", title: "Approved" };
+    return { label: "ok", tone: "is-ok", title: "Approved" };
   }
   if (latest?.status === "deny") {
-    return { label: "x", tone: "is-error", title: "Denied" };
+    return { label: "deny", tone: "is-error", title: "Denied" };
   }
   if (turn.status === "running" || turn.status === "inProgress") {
     return { label: "...", tone: "is-running", title: "Running" };
@@ -37,7 +33,7 @@ function getStatusMark(turn, approvals) {
   if (turn.status === "error" || turn.status === "failed" || turn.status === "interrupted") {
     return { label: "!", tone: "is-error", title: humanizeTurnStatus(turn.status) };
   }
-  return { label: "&#10003;", tone: "is-done", title: humanizeTurnStatus(turn.status) };
+  return { label: "ok", tone: "is-done", title: humanizeTurnStatus(turn.status) };
 }
 
 function getApprovalSummary(approval) {
@@ -48,34 +44,109 @@ function getApprovalSummary(approval) {
   return normalizeText(details.reason || "Codex requested file-change approval.");
 }
 
-function renderApprovalStrip(approvals) {
+function getAssistantText(blocks, summary) {
+  const assistant = [...blocks].reverse().find((block) => block.kind === "assistant");
+  if (assistant?.plainText?.trim()) {
+    return assistant.plainText.trim();
+  }
+  return summary.preview || "No response captured yet.";
+}
+
+function shouldOfferExpand(text) {
+  const normalized = normalizeText(text || "").trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.includes("\n")) {
+    return true;
+  }
+  return normalized.length > 120;
+}
+
+function getReasoningBlocks(blocks) {
+  const seen = new Set();
+  return blocks
+    .filter((block) => block.isReasoning || block.title === "Commentary")
+    .filter((block) => {
+      const text = normalizeText(block.plainText || "").trim();
+      if (!text) {
+        return false;
+      }
+      const key = `${block.title}:${text}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function getCommandBlocks(blocks) {
+  const seen = new Set();
+  return blocks
+    .filter((block) => block.kind === "tool" || block.kind === "warning" || block.kind === "error")
+    .filter((block) => {
+      const text = normalizeText(block.plainText || "").trim();
+      if (!text) {
+        return false;
+      }
+      const key = `${block.title}:${text}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function renderApprovalAttachments(approvals) {
   if (!approvals.length) {
     return "";
   }
-  return approvals
-    .map((approval) => {
-      const pending = approval.status === "pending";
-      const tone = pending ? "is-pending" : approval.status === "deny" ? "is-denied" : "is-approved";
-      return `
-        <div class="approval-inline ${tone}">
-          <div class="approval-inline-copy">
-            <strong>${pending ? "Approval" : approval.status === "approve" ? "Approved" : "Denied"}</strong>
-            <span>${escapeHtml(getApprovalSummary(approval))}</span>
-          </div>
-          ${
-            pending
-              ? `
-                <div class="approval-inline-actions">
-                  <button type="button" class="ghost-button approval-inline-button" data-approval-decision="deny" data-approval-id="${approval.approvalId}">Deny</button>
-                  <button type="button" class="primary-button approval-inline-button" data-approval-decision="approve" data-approval-id="${approval.approvalId}">Approve</button>
-                </div>
-              `
-              : ""
-          }
-        </div>
-      `;
-    })
-    .join("");
+  return `
+    <div class="chat-approval-stack">
+      ${approvals
+        .map((approval) => {
+          const pending = approval.status === "pending";
+          const tone = pending ? "is-pending" : approval.status === "deny" ? "is-denied" : "is-approved";
+          return `
+            <div class="chat-approval ${tone}">
+              <div class="chat-approval-copy">
+                <strong>${pending ? "Approval" : approval.status === "approve" ? "Approved" : "Denied"}</strong>
+                <span>${escapeHtml(getApprovalSummary(approval))}</span>
+              </div>
+              ${
+                pending
+                  ? `
+                    <div class="chat-approval-actions">
+                      <button type="button" class="ghost-button chat-approval-button" data-approval-decision="deny" data-approval-id="${approval.approvalId}">Deny</button>
+                      <button type="button" class="primary-button chat-approval-button" data-approval-decision="approve" data-approval-id="${approval.approvalId}">Approve</button>
+                    </div>
+                  `
+                  : ""
+              }
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderOriginBadge(entry, rowBranchLabel) {
+  if (entry.imported) {
+    const scopeCount = entry.sourceNodeCount || 1;
+    const mode = entry.mergeMode || "verbose";
+    return `
+      <span class="chat-turn-origin is-imported">
+        &#8627; Imported from ${escapeHtml(rowBranchLabel)} into T${entry.importedIntoTurnIdx} | ${escapeHtml(mode)} | ${scopeCount} turn${scopeCount === 1 ? "" : "s"}
+      </span>
+    `;
+  }
+  if (entry.inherited) {
+    return `<span class="chat-turn-origin is-inherited">&#8627; Inherited from ${escapeHtml(rowBranchLabel)}</span>`;
+  }
+  return "";
 }
 
 function renderContextSummary(state, contextLinks) {
@@ -83,57 +154,61 @@ function renderContextSummary(state, contextLinks) {
     return "";
   }
   return `
-    <div class="turn-detail-block">
-      <span class="turn-detail-label">Imported context</span>
-      <ul class="turn-detail-list">
-        ${contextLinks
-          .map((link) => {
-            const anchor = getContextLinkAnchor(link);
-            if (!anchor) {
-              return "";
-            }
-            const sourceTurn = getTurns(state, anchor.threadId).find((item) => item.turnId === anchor.turnId);
-            const label = sourceTurn ? `T${sourceTurn.idx}` : anchor.turnId.slice(0, 8);
-            const scopeCount = getContextLinkScopeCount(link);
-            return `<li>${escapeHtml(getBranchLabel(state, anchor.threadId))} / ${escapeHtml(label)} · ${escapeHtml(getContextLinkMode(link))} · ${scopeCount} turn${scopeCount === 1 ? "" : "s"}</li>`;
-          })
-          .join("")}
-      </ul>
-    </div>
-  `;
-}
-
-function renderTurnStream(summary, blocks) {
-  const streamBlocks = blocks.filter((block) => block?.plainText?.trim() && !String(block.title || "").startsWith("Approval"));
-  return `
-    <div class="turn-stream">
-      <section class="turn-stream-block is-user">
-        <div class="turn-stream-label">You</div>
-        <div class="turn-stream-text">${formatText(summary.prompt)}</div>
-      </section>
-      ${streamBlocks
-        .map((block) => {
-          const tone = block.isReasoning
-            ? "is-reasoning"
-            : block.kind === "assistant"
-              ? "is-assistant"
-              : block.title === "Commentary"
-                ? "is-commentary"
-                : block.kind === "tool"
-                  ? "is-tool"
-                  : block.kind === "error"
-                    ? "is-error"
-                    : "is-note";
+    <div class="chat-context-summary">
+      ${contextLinks
+        .map((link) => {
+          const anchor = getContextLinkAnchor(link);
+          if (!anchor) {
+            return "";
+          }
+          const sourceTurn = getTurns(state, anchor.threadId).find((item) => item.turnId === anchor.turnId);
+          const label = sourceTurn ? `T${sourceTurn.idx}` : anchor.turnId.slice(0, 8);
+          const scopeCount = getContextLinkScopeCount(link);
           return `
-            <section class="turn-stream-block ${tone}">
-              <div class="turn-stream-label">${escapeHtml(block.title || "Update")}</div>
-              <div class="turn-stream-text">${formatText(block.plainText)}</div>
-            </section>
+            <span class="chat-context-chip">
+              ${escapeHtml(getBranchLabel(state, anchor.threadId))} / ${escapeHtml(label)} | ${escapeHtml(getContextLinkMode(link))} | ${scopeCount}
+            </span>
           `;
         })
         .join("")}
     </div>
   `;
+}
+
+function renderAuxPanel(auxPanel, reasoningBlocks, commandBlocks) {
+  if (auxPanel === "reasoning" && reasoningBlocks.length) {
+    return `
+      <div class="chat-aux-panel" data-turn-aux-panel="reasoning">
+        ${reasoningBlocks
+          .map((block) => {
+            return `
+              <article class="chat-aux-item">
+                <header>${escapeHtml(block.title || "Reasoning")}</header>
+                <div>${formatText(block.plainText || "")}</div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+  if (auxPanel === "commands" && commandBlocks.length) {
+    return `
+      <div class="chat-aux-panel" data-turn-aux-panel="commands">
+        ${commandBlocks
+          .map((block) => {
+            return `
+              <article class="chat-aux-item">
+                <header>${escapeHtml(block.title || "Command")}</header>
+                <div>${formatText(block.plainText || "")}</div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+  return "";
 }
 
 function buildTranscriptEntries(state, threadId, targetThreadId = threadId, cutoffTurnId = null) {
@@ -194,12 +269,9 @@ function syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTu
   if (!feed) {
     return;
   }
-
-  const activeNodeId = state.expandedTurnKey
-    || (selectedNode?.thread?.threadId && selectedNode?.turn?.turnId
-      ? getNodeId(selectedNode.thread.threadId, selectedNode.turn.turnId)
-      : null);
-
+  const activeNodeId = selectedNode?.thread?.threadId && selectedNode?.turn?.turnId
+    ? getNodeId(selectedNode.thread.threadId, selectedNode.turn.turnId)
+    : null;
   if (activeNodeId) {
     const activeRow = feed.querySelector(`[data-turn-node="${activeNodeId}"]`);
     if (activeRow) {
@@ -207,7 +279,6 @@ function syncTranscriptFeed(container, state, selectedNode, selectedTurn, headTu
       return;
     }
   }
-
   if (!selectedTurn || headTurn?.turnId === selectedTurn.turnId) {
     feed.scrollTop = feed.scrollHeight;
   }
@@ -300,75 +371,106 @@ export function renderTranscript(container, state, handlers) {
             const rowThreadId = entry.threadId;
             const turn = entry.turn;
             const rowBranchLabel = getBranchLabel(state, rowThreadId);
-            const key = `${rowThreadId}:${turn.turnId}`;
-            const events = state.eventsByTurn[key] || [];
+            const nodeId = getNodeId(rowThreadId, turn.turnId);
+            const events = state.eventsByTurn[`${rowThreadId}:${turn.turnId}`] || [];
             const approvals = getApprovalsForTurn(state, rowThreadId, turn.turnId);
             const blocks = buildBlocks(turn, events, approvals);
             const summary = summarizeTurn(turn, blocks, approvals);
             const contextLinks = getContextLinks(turn);
-            const isCurrentBranchTurn = rowThreadId === thread.threadId;
-            const selected =
-              selectedNode?.thread?.threadId === rowThreadId && selectedNode?.turn?.turnId === turn.turnId ? "selected" : "";
-            const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
-            const isExpanded = state.expandedTurnKey === getNodeId(rowThreadId, turn.turnId);
-            const hasContext = contextLinks.length > 0;
-            const isImportedEntry = Boolean(entry.imported);
-            const isActiveContextTurn = isCurrentBranchTurn && hasContext && turn.idx <= focusCutoffIdx;
+            const selected = selectedNode?.thread?.threadId === rowThreadId && selectedNode?.turn?.turnId === turn.turnId;
             const statusMark = getStatusMark(turn, approvals);
-            const promptPreview = summarizeText(summary.prompt || "No prompt", 88);
-            const responsePreview = truncateText(getTurnResponse(blocks, summary) || "No response yet.", 110);
-            const showBranchBadge = entry.inherited || entry.imported;
-            const toolLines = blocks
-              .filter((block) => block.kind === "tool" || block.kind === "error" || block.kind === "warning")
-              .map((block) => block.plainText)
-              .filter(Boolean);
+            const reasoningBlocks = getReasoningBlocks(blocks);
+            const commandBlocks = getCommandBlocks(blocks);
+            const auxPanel = state.auxPanelByNode?.[nodeId] || null;
+            const userExpanded = Boolean(state.userExpandedByNode?.[nodeId]);
+            const assistantExpanded = Boolean(state.assistantExpandedByNode?.[nodeId]);
+            const userText = normalizeText(summary.prompt || "No prompt captured.");
+            const assistantText = normalizeText(getAssistantText(blocks, summary)).trim();
+            const userNeedsToggle = shouldOfferExpand(userText);
+            const assistantNeedsToggle = shouldOfferExpand(assistantText || "No response captured yet.");
             return `
-              <article class="turn-row ${selected} ${entry.inherited ? "turn-row-lineage" : ""} ${isImportedEntry ? "turn-row-imported-entry" : ""} ${isActiveContextTurn ? "turn-row-import-active" : hasContext ? "turn-row-import-future" : ""} ${pendingApprovals.length ? "turn-row-needs-approval" : ""}" data-turn-node="${rowThreadId}:${turn.turnId}">
-                <div class="turn-row-head" data-turn-head="${rowThreadId}:${turn.turnId}">
-                  <div class="turn-row-main">
-                    ${showBranchBadge ? `<span class="turn-row-branch-badge">${escapeHtml(rowBranchLabel)}</span>` : ""}
-                    <span class="turn-row-id">T${turn.idx}</span>
-                    <span class="turn-row-mark ${statusMark.tone}" title="${escapeHtml(statusMark.title)}">${statusMark.label}</span>
-                    <div class="turn-row-preview-stack">
-                      <div class="turn-row-prompt">${escapeHtml(promptPreview)}</div>
-                      <div class="turn-row-response">${escapeHtml(responsePreview)}</div>
-                    </div>
-                    ${hasContext ? `<span class="turn-row-link-flag" title="${contextLinks.length} imported link${contextLinks.length === 1 ? "" : "s"}">+${contextLinks.length}</span>` : ""}
-                    ${isImportedEntry ? `<span class="turn-row-link-flag" title="Imported into T${entry.importedIntoTurnIdx}">in T${entry.importedIntoTurnIdx}</span>` : ""}
-                    ${isImportedEntry && entry.mergeMode ? `<span class="turn-row-link-flag" title="${entry.sourceNodeCount || 1} source turn${entry.sourceNodeCount === 1 ? "" : "s"}">${escapeHtml(entry.mergeMode)}</span>` : ""}
+              <article class="chat-turn ${selected ? "selected" : ""} ${entry.inherited ? "is-inherited" : ""} ${entry.imported ? "is-imported" : ""}" data-turn-node="${nodeId}">
+                <header class="chat-turn-head">
+                  <div class="chat-turn-head-main">
+                    <span class="chat-turn-id">T${turn.idx}</span>
+                    <span class="chat-turn-branch">${escapeHtml(rowBranchLabel)}</span>
+                    <span class="chat-turn-status ${statusMark.tone}" title="${escapeHtml(statusMark.title)}">${escapeHtml(statusMark.label)}</span>
                   </div>
-                  <div class="turn-row-actions">
-                    <span class="turn-row-expand-hint">${isExpanded ? "Hide" : "Open"}</span>
-                  </div>
+                  ${renderOriginBadge(entry, rowBranchLabel)}
+                </header>
+                <div class="chat-row chat-row-user" data-turn-select-thread="${rowThreadId}" data-turn-select-turn="${turn.turnId}">
+                  <section class="chat-bubble chat-bubble-user">
+                    <div class="chat-bubble-label">You</div>
+                    <div class="chat-bubble-text ${!userExpanded ? "is-collapsed" : ""}" style="${!userExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(userText)}</div>
+                    ${
+                      userNeedsToggle
+                        ? `
+                          <button
+                            type="button"
+                            class="ghost-button chat-inline-toggle"
+                            data-toggle-user-thread="${rowThreadId}"
+                            data-toggle-user-turn="${turn.turnId}"
+                          >${userExpanded ? "less" : "more"}</button>
+                        `
+                        : ""
+                    }
+                  </section>
                 </div>
-                ${pendingApprovals.length ? `<div class="turn-approval-stack">${renderApprovalStrip(pendingApprovals)}</div>` : ""}
-                ${
-                  isExpanded
-                    ? `
-                      <div class="turn-row-body">
-                        ${renderTurnStream(summary, blocks)}
-                        ${
-                          toolLines.length && !blocks.some((block) => block.kind === "tool")
-                            ? `
-                              <div class="turn-detail-block">
-                                <span class="turn-detail-label">Tools</span>
-                                <ul class="turn-detail-list">
-                                  ${toolLines.slice(0, 6).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
-                                </ul>
-                              </div>
-                            `
-                            : ""
-                        }
-                        ${renderContextSummary(state, contextLinks)}
-                        ${
-                          approvals.filter((approval) => approval.status !== "pending").length
-                            ? `<div class="turn-approval-stack">${renderApprovalStrip(approvals.filter((approval) => approval.status !== "pending"))}</div>`
-                            : ""
-                        }
-                      </div>
-                    `
-                    : ""
-                }
+                <div class="chat-row chat-row-assistant" data-turn-select-thread="${rowThreadId}" data-turn-select-turn="${turn.turnId}">
+                  <section class="chat-bubble chat-bubble-assistant">
+                    <div class="chat-bubble-label">Assistant</div>
+                    <div class="chat-bubble-text ${!assistantExpanded ? "is-collapsed" : ""}" style="${!assistantExpanded ? `--chat-line-clamp:${CLAMP_LINE_COUNT}` : ""}">${formatText(assistantText || "No response captured yet.")}</div>
+                    ${
+                      assistantNeedsToggle
+                        ? `
+                          <button
+                            type="button"
+                            class="ghost-button chat-inline-toggle"
+                            data-toggle-assistant-thread="${rowThreadId}"
+                            data-toggle-assistant-turn="${turn.turnId}"
+                          >${assistantExpanded ? "less" : "more"}</button>
+                        `
+                        : ""
+                    }
+                    ${renderApprovalAttachments(approvals)}
+                    ${
+                      reasoningBlocks.length || commandBlocks.length
+                        ? `
+                          <div class="chat-aux-actions">
+                            ${
+                              reasoningBlocks.length
+                                ? `
+                                  <button
+                                    type="button"
+                                    class="ghost-button chat-aux-toggle ${auxPanel === "reasoning" ? "is-active" : ""}"
+                                    data-toggle-aux-thread="${rowThreadId}"
+                                    data-toggle-aux-turn="${turn.turnId}"
+                                    data-toggle-aux-panel="reasoning"
+                                  >Reasoning (${reasoningBlocks.length})</button>
+                                `
+                                : ""
+                            }
+                            ${
+                              commandBlocks.length
+                                ? `
+                                  <button
+                                    type="button"
+                                    class="ghost-button chat-aux-toggle ${auxPanel === "commands" ? "is-active" : ""}"
+                                    data-toggle-aux-thread="${rowThreadId}"
+                                    data-toggle-aux-turn="${turn.turnId}"
+                                    data-toggle-aux-panel="commands"
+                                  >Commands (${commandBlocks.length})</button>
+                                `
+                                : ""
+                            }
+                          </div>
+                        `
+                        : ""
+                    }
+                    ${renderAuxPanel(auxPanel, reasoningBlocks, commandBlocks)}
+                    ${renderContextSummary(state, contextLinks)}
+                  </section>
+                </div>
               </article>
             `;
           })
@@ -411,29 +513,39 @@ export function renderTranscript(container, state, handlers) {
     </section>
   `;
 
-  container.querySelectorAll("[data-turn-head]").forEach((element) => {
+  container.querySelectorAll("[data-turn-select-thread][data-turn-select-turn]").forEach((element) => {
     element.addEventListener("click", (event) => {
       if (event.target.closest("button")) {
         return;
       }
-      const [threadId, turnId] = element.dataset.turnHead.split(":");
-      const shouldToggle = handlers.onSelectNode(threadId, turnId);
-      if (shouldToggle === false) {
-        return;
-      }
-      handlers.onToggleTurn(threadId, turnId);
+      const threadId = element.dataset.turnSelectThread;
+      const turnId = element.dataset.turnSelectTurn;
+      handlers.onSelectNode(threadId, turnId);
     });
   });
 
-  container.querySelectorAll("[data-turn-response-scroll]").forEach((element) => {
-    element.addEventListener("click", (event) => {
+  container.querySelectorAll("[data-toggle-assistant-thread][data-toggle-assistant-turn]").forEach((button) => {
+    button.addEventListener("click", (event) => {
       event.stopPropagation();
+      handlers.onToggleAssistantExpanded(button.dataset.toggleAssistantThread, button.dataset.toggleAssistantTurn);
     });
-    element.addEventListener("pointerdown", (event) => {
+  });
+
+  container.querySelectorAll("[data-toggle-user-thread][data-toggle-user-turn]").forEach((button) => {
+    button.addEventListener("click", (event) => {
       event.stopPropagation();
+      handlers.onToggleUserExpanded(button.dataset.toggleUserThread, button.dataset.toggleUserTurn);
     });
-    element.addEventListener("wheel", (event) => {
+  });
+
+  container.querySelectorAll("[data-toggle-aux-thread][data-toggle-aux-turn][data-toggle-aux-panel]").forEach((button) => {
+    button.addEventListener("click", (event) => {
       event.stopPropagation();
+      handlers.onToggleAuxPanel(
+        button.dataset.toggleAuxThread,
+        button.dataset.toggleAuxTurn,
+        button.dataset.toggleAuxPanel,
+      );
     });
   });
 

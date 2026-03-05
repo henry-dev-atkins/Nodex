@@ -15,6 +15,9 @@ Current shipped refinements on top of this spec:
 - Branch creation now requires replayable lineage history and validates resumed branch snapshots to prevent empty ghost branches.
 - DAG node selection now explicitly distinguishes click from drag so positioning nodes does not cause accidental reselection.
 - Empty start nodes now expose direct delete actions for empty branches and empty root conversations.
+- Transcript rendering is now chat-like: user content is right-aligned, assistant content is left-aligned, and inherited/imported entries remain visible with subtle differentiated shading and `↳` lineage markers.
+- Reasoning and command details are hidden by default behind compact per-turn toggles, with only one auxiliary panel open at a time per turn.
+- Message bodies are collapsed to a two-line preview by default with a small per-message `more/less` control.
 
 ## 1. Global Visual System Changes
 
@@ -192,6 +195,14 @@ Agent streaming:
 
 - Batch deltas every `75ms`
 - Combine into a single message block
+
+Current shipped transcript behavior:
+
+- Primary transcript presentation is chat-style rather than row-chrome-first.
+- User prompts are right-aligned bubbles; assistant responses are left-aligned bubbles.
+- Commentary is folded into the reasoning detail panel by default.
+- Reasoning and command output stay collapsed behind small toggles until explicitly opened.
+- Message text is line-clamped to two lines with a compact `more/less` control.
 
 ## 8. Approval UI Simplification
 

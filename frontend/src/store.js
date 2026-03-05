@@ -28,6 +28,9 @@ function ensureSelection(state) {
     state.expandedTurnKey = null;
     state.forcedBranchNodeId = null;
     state.pendingMergeSourceNodeId = null;
+    state.userExpandedByNode = {};
+    state.assistantExpandedByNode = {};
+    state.auxPanelByNode = {};
     state.compare = {
       open: false,
       leftNodeId: null,
@@ -71,6 +74,26 @@ function ensureSelection(state) {
   }
   if (state.pendingMergeSourceNodeId && !nodeExists(state, state.pendingMergeSourceNodeId)) {
     state.pendingMergeSourceNodeId = null;
+  }
+  for (const nodeId of Object.keys(state.userExpandedByNode || {})) {
+    if (!nodeExists(state, nodeId)) {
+      delete state.userExpandedByNode[nodeId];
+    }
+  }
+  for (const nodeId of Object.keys(state.assistantExpandedByNode || {})) {
+    if (!nodeExists(state, nodeId)) {
+      delete state.assistantExpandedByNode[nodeId];
+    }
+  }
+  for (const nodeId of Object.keys(state.auxPanelByNode || {})) {
+    if (!nodeExists(state, nodeId)) {
+      delete state.auxPanelByNode[nodeId];
+      continue;
+    }
+    const panel = state.auxPanelByNode[nodeId];
+    if (panel !== "reasoning" && panel !== "commands") {
+      delete state.auxPanelByNode[nodeId];
+    }
   }
   if (state.compare.leftNodeId && !nodeExists(state, state.compare.leftNodeId)) {
     state.compare.leftNodeId = null;
@@ -172,6 +195,9 @@ export function createStore() {
     selectedThreadId: null,
     selectedNodeId: null,
     expandedTurnKey: null,
+    userExpandedByNode: {},
+    assistantExpandedByNode: {},
+    auxPanelByNode: {},
     viewMode: "focus",
     composerFocusNonce: 0,
     forcedBranchNodeId: null,
@@ -294,6 +320,41 @@ export function createStore() {
       state.selectedThreadId = threadId;
       state.selectedNodeId = key;
       state.expandedTurnKey = state.expandedTurnKey === key ? null : key;
+      emit();
+    },
+    toggleUserExpanded(threadId, turnId) {
+      const key = getNodeId(threadId, turnId);
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = threadId;
+      state.selectedNodeId = key;
+      state.userExpandedByNode[key] = !state.userExpandedByNode[key];
+      emit();
+    },
+    toggleAssistantExpanded(threadId, turnId) {
+      const key = getNodeId(threadId, turnId);
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = threadId;
+      state.selectedNodeId = key;
+      state.assistantExpandedByNode[key] = !state.assistantExpandedByNode[key];
+      emit();
+    },
+    setAssistantExpanded(threadId, turnId, expanded) {
+      const key = getNodeId(threadId, turnId);
+      state.assistantExpandedByNode[key] = Boolean(expanded);
+      emit();
+    },
+    toggleTurnAuxPanel(threadId, turnId, panel) {
+      const normalizedPanel = panel === "commands" ? "commands" : panel === "reasoning" ? "reasoning" : null;
+      const key = getNodeId(threadId, turnId);
+      state.selectedConversationId = getConversationRootId(state, threadId) || threadId;
+      state.selectedThreadId = threadId;
+      state.selectedNodeId = key;
+      const current = state.auxPanelByNode[key];
+      if (current === normalizedPanel || !normalizedPanel) {
+        delete state.auxPanelByNode[key];
+      } else {
+        state.auxPanelByNode[key] = normalizedPanel;
+      }
       emit();
     },
     setViewMode(mode) {

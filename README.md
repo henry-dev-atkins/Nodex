@@ -4,7 +4,7 @@ Local-only wrapper around `codex app-server` with:
 
 - FastAPI REST API plus WebSocket replay/live stream
 - SQLite persistence for threads, turns, events, approvals, and import previews
-- Browser UI for conversation selection, direct DAG-driven child-turn creation, compact transcripts, and inline approvals
+- Browser UI for conversation selection, direct DAG-driven child-turn creation, chat-style transcripts, and inline approvals
 - Explicit approval flow only, never auto-approved
 
 ## Design Docs
@@ -28,9 +28,9 @@ The README describes the current shipped behavior. The spec and implementation p
 - Visual system: flat neutral surfaces, thin borders, low-radius shapes, and accent color reserved mainly for active/imported/running states
 - Focus mode: explicit `Continue`, `Branch`, `Merge Into...`, and `Compare` actions above a `Current Context` panel plus the active branch transcript
 - Map mode: zoomable and pannable vertical DAG with prompt-summary boxes, draggable branch lanes, stable click-vs-drag node interaction, solid lineage edges, dashed imported-context edges, and drag handles for child-turn creation or merge-back into another branch head
-- Transcript: compact `Tn` rows with summarized prompt previews, response previews, inherited parent-context rows, and scrollable expanded responses
+- Transcript: chat-style flow with right-aligned user bubbles, left-aligned assistant bubbles, inherited/imported rows retained with subtle shading and `↳` lineage markers, and per-message 2-line clamp with tiny `more/less` toggles
 - Compare panel: side-by-side prompt and response summaries for two selected turns
-- Approvals: inline inside the transcript, never modal auto-approval
+- Approvals: attached to the related assistant bubble inside the transcript, never modal auto-approval
 
 Context imports are copied into the created child turn as prompt text, but the new turn is also linked back to its source turn(s) so the DAG can show provenance.
 Branch creation replays lineage from persisted turn snapshots with event-derived fallback recovery, and branch snapshots are validated before local persistence to avoid empty ghost branches.
@@ -84,6 +84,7 @@ The tests use a fake Codex harness and do not require network access or a live C
 - Branch from any selected turn with the explicit `Branch` action
 - Reject branch creation when replayable history is unavailable, and validate returned branch snapshots before saving
 - Inspect active lineage and imported context from the `Current Context` stack
+- Expand one per-turn detail panel at a time (`Reasoning` or `Commands`), both collapsed by default
 - Compare two turns side by side from the explicit `Compare` action
 - Create a linked child turn by dragging one DAG node onto another in Map mode
 - Merge a side branch back into another branch head by arming `Merge Into...` and selecting a target turn in Map mode

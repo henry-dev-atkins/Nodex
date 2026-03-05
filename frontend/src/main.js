@@ -143,11 +143,17 @@ function openContextMenu({ x, y, items }) {
 
 function renderTranscriptInto(container, state) {
   renderTranscript(container, state, {
-    onToggleTurn(threadId, turnId) {
-      store.toggleTurnExpanded(threadId, turnId);
-    },
     onSelectNode(threadId, turnId) {
       return uiActions.selectNodeOrMerge(threadId, turnId);
+    },
+    onToggleUserExpanded(threadId, turnId) {
+      store.toggleUserExpanded(threadId, turnId);
+    },
+    onToggleAssistantExpanded(threadId, turnId) {
+      store.toggleAssistantExpanded(threadId, turnId);
+    },
+    onToggleAuxPanel(threadId, turnId, panel) {
+      store.toggleTurnAuxPanel(threadId, turnId, panel);
     },
     async onApprovalDecision(approvalId, decision) {
       try {

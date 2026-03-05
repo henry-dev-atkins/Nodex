@@ -25,8 +25,10 @@ Source spec: [UI_REDESIGN_SPEC.md](/C:/Users/Henry/PersonalProjects/codex-wrappe
 - The shipped graph interaction now uses a click-vs-drag threshold so node repositioning and node selection do not interfere with each other.
 - The shipped map context menu now includes direct empty-start-node deletion for empty branches and empty root conversations.
 - The shipped branch flow now reconstructs replayable lineage history from stored turns/events and rejects empty resume snapshots to prevent ghost branches.
-- The shipped transcript includes inherited parent-lineage rows so a branch always shows the context it forked from.
-- Long responses are intended to scroll inside bounded detail containers rather than expanding the entire transcript panel.
+- The shipped transcript now uses chat-style alignment (user right, assistant left) while still including inherited and imported rows in-order with subtle differentiated shading.
+- The shipped transcript folds commentary into reasoning by default and keeps reasoning/command panels collapsed unless explicitly expanded.
+- The shipped transcript clamps message bodies to two lines by default and exposes compact per-message `more/less` controls.
+- The shipped transcript allows only one auxiliary panel (`Reasoning` or `Commands`) open at a time per turn.
 - The main remaining purpose of this document is traceability from implementation back to design intent.
 
 ## Phase 1: Visual System Compression
@@ -56,15 +58,16 @@ Scope:
 - Replace the current multi-line header with a one-line thread/turn/status row
 - Remove the transcript focus explanation block
 - Replace sidebar cards with compact list rows
-- Compress transcript turn chrome to `Tn` plus state marker
-- Remove persistent `Prompt` / `Response` / `Extra info` button rows
-- Move secondary actions behind hover `...`
+- Shift transcript presentation to chat-style left/right message alignment
+- Retain branch lineage/import visibility with compact inline provenance markers
+- Clamp message previews and surface compact per-message expand/collapse controls
 
 Acceptance criteria:
 
 - Header fits on one line with thread name, active turn, and status dot
 - Sidebar entries render as dense rows, not cards
-- Turn rows can be expanded inline on click with no always-visible action cluster
+- Transcript reads like a chat flow while preserving branch provenance context
+- Default message rendering is dense, with two-line previews and explicit expand controls
 
 ## Phase 3: DAG Interaction Redesign
 
@@ -95,16 +98,19 @@ Status: `implemented`
 
 Scope:
 
-- Render approvals inline with transcript content
-- Use subtle left-border emphasis instead of large blocks
+- Render approvals attached to assistant message bubbles inside transcript content
+- Keep approval presentation compact so it reads as part of the assistant output
 - Keep approval actions minimal and inline
 - Batch agent streaming deltas at `75ms`
 - Collapse streamed output into a single message block
+- Keep reasoning and command details collapsed by default behind explicit toggles
+- Ensure at most one auxiliary detail panel is open at a time per turn
 
 Acceptance criteria:
 
-- Approval UI no longer dominates the transcript width
+- Approval UI no longer dominates transcript width and remains visually tied to related assistant output
 - Streaming produces one coherent assistant block per turn
+- Reasoning/command details are opt-in and do not expand automatically with the main message
 - No auto-approval behavior is introduced
 
 ## Phase 5: Graph Layout and Styling Rules
@@ -185,3 +191,4 @@ Acceptance criteria:
 - Runtime process management is bounded and tested.
 - README, spec, and plan stay aligned.
 - Branch creation, DAG node interaction, and empty-branch cleanup behavior are explicitly documented as core features.
+- Chat-style transcript alignment, line-clamped message previews, and compact auxiliary detail toggles are documented as core behavior.
